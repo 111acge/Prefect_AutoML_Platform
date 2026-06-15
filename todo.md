@@ -353,11 +353,11 @@
 
 ### 🟡 中优先级
 
-- [ ] **训练任务执行架构可优化**
+- [x] **训练任务执行架构优化**
   - 位置：`backend/routers/runs.py` 的 `_execute_flow`
   - 问题：使用 `BackgroundTasks` + 嵌套 `asyncio.run` 调用异步数据库更新，能用但不是最佳实践
   - 影响：长时间训练可能阻塞 FastAPI worker 或导致资源泄漏
-  - 修复：改用 Celery / RQ / Prefect 原生部署执行训练任务
+  - 修复：新增 `backend/services/training_executor.py`，使用 `asyncio.create_subprocess_exec` + 信号量控制并发，彻底避免 `asyncio.run` 嵌套；最大并发训练任务数默认为 2
 
 - [ ] **`.env` 加载路径依赖运行目录**
   - 位置：`backend/config.py` 中 `env_file=".env"`
@@ -369,10 +369,9 @@
   - 影响：数据集上传、训练流程、预测等核心路径无测试保障
   - 修复：补充数据集上传、创建训练任务、预测等集成测试
 
-- [ ] **Dockerfile 未包含前端**
+- [x] **Dockerfile 未包含前端**
   - 问题：`Dockerfile` 只复制了后端代码，没有前端构建产物和静态文件服务
-  - 影响：按当前 Dockerfile 构建的镜像无法访问前端页面
-  - 修复：增加 Node 构建阶段，或用 Nginx 统一反向代理前后端
+  - 决策：用户要求直接跑在服务器上，不使用 Docker，因此直接删除 `Dockerfile`
 
 ### 🟢 低优先级
 
@@ -381,9 +380,9 @@
   - 影响：无法追踪版本、协作和回滚
   - 修复：`git init` 完成，已配置 `.gitignore`
 
-- [ ] **README/task.md 中仍有 Docker 相关描述**
+- [x] **README/task.md 中 Docker 相关描述**
   - 问题：用户要求直接跑在服务器上，但文档中仍保留 Dockerfile 和 Docker Compose 相关章节
-  - 修复：在文档中增加"服务器直接部署"说明，或移除 Docker 相关内容
+  - 修复：`Dockerfile` 已删除；`README.md` 增加"服务器直接部署"章节，使用 `scripts/run_prod.sh`
 
 - [x] **前端构建产物体积过大**
   - 问题：`vite build` 提示主 chunk 超过 500KB
@@ -425,6 +424,4 @@
 
 ### ⏳ 待处理
 
-- [ ] **训练任务执行架构可优化**：仍使用 `BackgroundTasks` + `asyncio.run`，后续可迁移到 Celery/RQ
-- [ ] **Dockerfile 未包含前端**：用户要求不用 Docker，当前优先级降低
-- [ ] **README/task.md 中 Docker 相关描述**：用户要求直接跑在服务器上，已新增 `scripts/run_prod.sh`
+当前检查中发现的问题已全部处理完毕。后续可按主 Todo 清单继续补充 P1/P2 增强功能。

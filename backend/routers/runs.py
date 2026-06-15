@@ -2,24 +2,21 @@
 
 import asyncio
 import json
-import os
-import subprocess
-import sys
-from datetime import datetime, UTC
 from pathlib import Path
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
-from database import get_db, AsyncSessionLocal
-from models import Dataset, Run, Metric
+from database import get_db
+from models import Dataset, Run
 from schemas import RunCreate, RunResponse, RunResult, PredictionRequest, PredictionResponse
 from services.data_service import load_dataframe
 from services.storage import storage_service
+from services.training_executor import training_executor
 
 router = APIRouter(tags=["runs"])
 
@@ -31,124 +28,9 @@ def _get_output_dir(run_id: str) -> Path:
     return output_dir
 
 
-def _execute_flow(
-    run_id: str,
-    file_path: str,
-    target_column: str,
-    task_type: str,
-    output_dir: str,
-    time_budget_minutes: float,
-    preset: str,
-    primary_metric: str | None,
-    seed: int | None,
-    max_models: int,
-):
-    """在独立子进程中执行 Prefect Flow。"""
-    from database import AsyncSessionLocal
-
-    async def _update(status: str, error: str | None = None):
-        async with AsyncSessionLocal() as db:
-            result = await db.execute(select(Run).where(Run.id == run_id))
-            run = result.scalar_one()
-            run.status = status
-            if error:
-                run.error_message = error
-            if status in ("completed", "failed"):
-                run.completed_at = datetime.now(UTC)
-            await db.commit()
-
-    import asyncio
-
-    asyncio.run(_update("running"))
-
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
-    log_path = output_path / "training.log"
-
-    try:
-        script_path = settings.project_root / "scripts" / "run_flow.py"
-        cmd = [
-            sys.executable,
-            str(script_path),
-            "--file-path",
-            file_path,
-            "--target-column",
-            target_column,
-            "--task-type",
-            task_type,
-            "--output-dir",
-            output_dir,
-            "--time-budget-minutes",
-            str(time_budget_minutes),
-            "--preset",
-            preset,
-        ]
-        if primary_metric:
-            cmd.extend(["--primary-metric", primary_metric])
-        if seed is not None:
-            cmd.extend(["--seed", str(seed)])
-
-        env = os.environ.copy()
-        env["PREFECT_API_URL"] = ""
-
-        with open(log_path, "w", encoding="utf-8") as log_file:
-            log_file.write(f"[{datetime.now(UTC).isoformat()}] 启动训练任务: {run_id}\n")
-            log_file.flush()
-
-            result = subprocess.run(
-                cmd,
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                text=True,
-                env=env,
-                timeout=time_budget_minutes * 60 + 300,  # 额外 5 分钟缓冲
-            )
-
-            if result.returncode != 0:
-                log_file.write(
-                    f"\n[{datetime.now(UTC).isoformat()}] 训练失败 (exit {result.returncode})\n"
-                )
-                log_file.flush()
-                raise RuntimeError(f"Flow 执行失败 (exit {result.returncode})，详见 training.log")
-
-            log_file.write(f"\n[{datetime.now(UTC).isoformat()}] 训练完成\n")
-            log_file.flush()
-
-        # 解析指标
-        asyncio.run(_save_metrics(run_id, output_dir))
-        asyncio.run(_update("completed"))
-
-    except Exception as e:
-        with open(log_path, "a", encoding="utf-8") as log_file:
-            log_file.write(f"\n[{datetime.now(UTC).isoformat()}] ERROR: {str(e)}\n")
-        asyncio.run(_update("failed", str(e)))
-
-
-async def _save_metrics(run_id: str, output_dir: str):
-    """保存评估指标到数据库。"""
-    async with AsyncSessionLocal() as db:
-        metrics_path = Path(output_dir) / "metrics.json"
-        if metrics_path.exists():
-            with open(metrics_path, "r", encoding="utf-8") as f:
-                metrics_data = json.load(f)
-                all_metrics = {}
-                all_metrics.update(metrics_data.get("final", {}))
-                all_metrics.update(metrics_data.get("extended", {}))
-                for metric_name, metric_value in all_metrics.items():
-                    if isinstance(metric_value, (int, float)):
-                        metric = Metric(
-                            run_id=run_id,
-                            metric_name=str(metric_name),
-                            metric_value=float(metric_value),
-                        )
-                        db.add(metric)
-        await db.commit()
-
-
 @router.post("", response_model=RunResponse)
 async def create_run(
     request: RunCreate,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     """启动训练任务。"""
@@ -194,9 +76,8 @@ async def create_run(
         await db.commit()
         await db.refresh(run)
 
-        # 后台执行
-        background_tasks.add_task(
-            _execute_flow,
+        # 提交到异步训练执行器，避免阻塞 FastAPI worker
+        await training_executor.submit(
             run_id=run.id,
             file_path=dataset.file_path,
             target_column=request.target_column,

@@ -55,6 +55,37 @@ npm run dev -- --port 8084
 bash scripts/run_dev.sh
 ```
 
+## 服务器直接部署（生产环境）
+
+本项目默认直接运行在服务器上，不依赖 Docker。
+
+```bash
+cd prefect-project
+
+# 构建前端
+cd frontend
+npm install
+npm run build
+
+# 一键启动后端（8001）和前端（8084）
+cd ..
+bash scripts/run_prod.sh
+```
+
+启动后：
+- 后端 API：`http://<服务器IP>:8001`
+- 前端页面：`http://<服务器IP>:8084`
+- 后端日志：`logs/backend.log`
+- 前端日志：`logs/frontend.log`
+
+停止服务：
+
+```bash
+bash scripts/run_prod_stop.sh
+```
+
+> 说明：训练任务在独立子进程中异步执行，并通过信号量控制最大并发数（默认 2），避免长时间训练阻塞 FastAPI 主服务。
+
 ## 核心功能
 
 1. 数据集上传（CSV / Excel / Parquet / 数据库）
