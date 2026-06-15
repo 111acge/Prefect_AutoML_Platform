@@ -95,8 +95,15 @@ def test_upload_dataset():
     assert data["column_count"] == 3
 
 
-def test_create_run(default_dataset):
+def test_create_run(default_dataset, monkeypatch):
     """测试创建训练任务。"""
+    from services.training_executor import training_executor
+
+    async def _mock_submit(**kwargs):
+        return None
+
+    monkeypatch.setattr(training_executor, "submit", _mock_submit)
+
     response = client.post(
         "/api/runs",
         json={
@@ -125,9 +132,12 @@ def test_predict_before_completion(default_dataset, monkeypatch):
     TestClient 会等待后台任务执行完毕，因此需要 mock 掉后台执行，
     才能验证 pending 状态下的预测拦截。
     """
-    from fastapi import BackgroundTasks
+    from services.training_executor import training_executor
 
-    monkeypatch.setattr(BackgroundTasks, "add_task", lambda *args, **kwargs: None)
+    async def _mock_submit(**kwargs):
+        return None
+
+    monkeypatch.setattr(training_executor, "submit", _mock_submit)
 
     response = client.post(
         "/api/runs",
@@ -139,6 +149,7 @@ def test_predict_before_completion(default_dataset, monkeypatch):
             "preset": "medium_quality",
         },
     )
+    assert response.status_code == 200, response.text
     run_id = response.json()["id"]
 
     response = client.post(
@@ -147,6 +158,45 @@ def test_predict_before_completion(default_dataset, monkeypatch):
     )
     assert response.status_code == 400
     assert "尚未完成" in response.json()["detail"]
+
+
+def test_update_dataset_target(default_dataset):
+    """测试设置目标列和任务类型。"""
+    response = client.put(
+        f"/api/datasets/{default_dataset.id}",
+        json={"target_column": "target", "task_type": "multiclass_classification"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["target_column"] == "target"
+    assert data["task_type"] == "multiclass_classification"
+
+
+def test_update_dataset_invalid_target(default_dataset):
+    """测试设置不存在的目标列应失败。"""
+    response = client.put(
+        f"/api/datasets/{default_dataset.id}",
+        json={"target_column": "not_exist", "task_type": "multiclass_classification"},
+    )
+    assert response.status_code == 400
+
+
+def test_get_dataset_schema(default_dataset):
+    """测试获取数据集 Schema。"""
+    response = client.get(f"/api/datasets/{default_dataset.id}/schema")
+    assert response.status_code == 200
+    data = response.json()
+    assert "fields" in data
+    assert any(f["name"] == "target" for f in data["fields"])
+
+
+def test_validate_dataset_schema(default_dataset):
+    """测试 Schema 校验。"""
+    response = client.post(f"/api/datasets/{default_dataset.id}/validate")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["valid"] is True
+    assert data["errors"] == []
 
 
 @pytest.mark.slow

@@ -7,10 +7,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models import Dataset
-from schemas import DatasetResponse, DatasetPreview
+from schemas import (
+    DatasetResponse,
+    DatasetPreview,
+    DatasetUpdate,
+    DatasetSchemaResponse,
+    SchemaValidationResponse,
+)
 from services.storage import storage_service
 from services.data_quality import assess_data_quality
 from services.data_service import load_dataframe, analyze_metadata, preview_dataframe
+from services.schema_service import (
+    build_schema_from_file,
+    validate_against_schema,
+    SchemaValidationError,
+)
 
 router = APIRouter(tags=["datasets"])
 
@@ -82,6 +93,92 @@ async def preview_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
     try:
         df = load_dataframe(dataset.file_path)
         return preview_dataframe(df)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/{dataset_id}", response_model=DatasetResponse)
+async def update_dataset(
+    dataset_id: str,
+    request: DatasetUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """设置数据集目标列和任务类型，并重新生成 Schema 信息。"""
+    result = await db.execute(select(Dataset).where(Dataset.id == dataset_id))
+    dataset = result.scalar_one_or_none()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="数据集不存在")
+
+    df = load_dataframe(dataset.file_path)
+    if request.target_column not in df.columns:
+        raise HTTPException(
+            status_code=400,
+            detail=f"目标列 '{request.target_column}' 不存在于数据集中",
+        )
+
+    # 校验任务类型与目标列是否匹配
+    from services.data_service import infer_field_type
+
+    target_type = infer_field_type(df[request.target_column])
+    unique_count = df[request.target_column].nunique()
+    is_numeric = target_type == "numeric"
+
+    if request.task_type == "binary_classification" and unique_count != 2:
+        raise HTTPException(
+            status_code=400,
+            detail=f"二分类任务要求目标列恰好有 2 个唯一值，当前有 {unique_count} 个",
+        )
+    if request.task_type == "multiclass_classification" and unique_count < 3:
+        raise HTTPException(
+            status_code=400,
+            detail=f"多分类任务要求目标列至少有 3 个唯一值，当前有 {unique_count} 个",
+        )
+    if request.task_type == "regression" and not is_numeric:
+        raise HTTPException(status_code=400, detail="回归任务要求目标列为数值类型")
+
+    dataset.target_column = request.target_column
+    dataset.task_type = request.task_type
+
+    # 重新生成 schema_info
+    metadata = analyze_metadata(df, target_column=request.target_column)
+    quality = assess_data_quality(df, target_column=request.target_column)
+    dataset.schema_info = {**metadata, "quality": quality}
+
+    await db.commit()
+    await db.refresh(dataset)
+    return dataset
+
+
+@router.get("/{dataset_id}/schema", response_model=DatasetSchemaResponse)
+async def get_dataset_schema(dataset_id: str, db: AsyncSession = Depends(get_db)):
+    """获取数据集 Schema。"""
+    result = await db.execute(select(Dataset).where(Dataset.id == dataset_id))
+    dataset = result.scalar_one_or_none()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="数据集不存在")
+
+    try:
+        schema = build_schema_from_file(dataset.file_path, target_column=dataset.target_column)
+        return schema.to_dict()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{dataset_id}/validate", response_model=SchemaValidationResponse)
+async def validate_dataset_schema(dataset_id: str, db: AsyncSession = Depends(get_db)):
+    """校验当前数据集是否符合其 Schema。"""
+    result = await db.execute(select(Dataset).where(Dataset.id == dataset_id))
+    dataset = result.scalar_one_or_none()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="数据集不存在")
+
+    try:
+        schema = build_schema_from_file(dataset.file_path, target_column=dataset.target_column)
+        df = load_dataframe(dataset.file_path)
+        errors = validate_against_schema(df, schema)
+        return SchemaValidationResponse(valid=len(errors) == 0, errors=errors)
+    except SchemaValidationError as e:
+        return SchemaValidationResponse(valid=False, errors=e.errors)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

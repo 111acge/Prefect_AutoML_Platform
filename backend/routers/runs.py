@@ -17,6 +17,7 @@ from schemas import RunCreate, RunResponse, RunResult, PredictionRequest, Predic
 from services.data_service import load_dataframe
 from services.storage import storage_service
 from services.training_executor import training_executor
+from services.schema_service import build_schema_from_file, validate_against_schema
 
 router = APIRouter(tags=["runs"])
 
@@ -50,6 +51,28 @@ async def create_run(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    # Schema 校验
+    try:
+        schema = await asyncio.to_thread(
+            build_schema_from_file,
+            dataset.file_path,
+            request.target_column,
+        )
+        errors = await asyncio.to_thread(
+            validate_against_schema,
+            load_dataframe(dataset.file_path),
+            schema,
+        )
+        if errors:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Schema 校验失败: {'; '.join(errors)}",
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Schema 校验异常: {str(e)}")
 
     try:
         output_dir = _get_output_dir("temp")

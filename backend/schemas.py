@@ -13,6 +13,38 @@ class DatasetCreate(BaseModel):
     task_type: Optional[str] = None
 
 
+class DatasetUpdate(BaseModel):
+    """更新数据集请求（目标列 / 任务类型）。"""
+
+    target_column: str
+    task_type: str = Field(
+        ..., pattern="^(binary_classification|multiclass_classification|regression)$"
+    )
+
+
+class SchemaField(BaseModel):
+    """Schema 字段定义。"""
+
+    name: str
+    field_type: str
+    nullable: bool = True
+    constraints: Dict[str, Any] = Field(default_factory=dict)
+
+
+class DatasetSchemaResponse(BaseModel):
+    """数据集 Schema 响应。"""
+
+    fields: List[SchemaField]
+    target_column: Optional[str] = None
+
+
+class SchemaValidationResponse(BaseModel):
+    """Schema 校验结果响应。"""
+
+    valid: bool
+    errors: List[str] = Field(default_factory=list)
+
+
 class DatasetResponse(BaseModel):
     """数据集响应。"""
 
