@@ -40,6 +40,7 @@ class AutoMLService:
         seed: Optional[int] = None,
         max_models: int = 50,
         strategy: Optional[Dict[str, Any]] = None,
+        sample_weight: Optional[pd.Series] = None,
     ) -> Dict[str, Any]:
         """训练 AutoGluon 模型。"""
 
@@ -72,7 +73,7 @@ class AutoMLService:
         if seed is not None:
             fit_kwargs["hyperparameters"] = self._hyperparameters_with_seed(seed)
 
-        # 类别不平衡处理：优先使用策略决策，否则自动计算
+        # 类别不平衡处理：优先使用传入的样本权重，其次按策略，最后自动兜底
         sample_weight_col = "_sample_weight"
         use_sample_weight = False
         imbalance_ratio = None
@@ -80,19 +81,33 @@ class AutoMLService:
             y_train = train_data[target_column]
             class_counts = y_train.value_counts()
             imbalance_ratio = float(class_counts.max() / class_counts.min())
-            if strategy is not None:
-                use_sample_weight = strategy.get("use_sample_weight", False)
-            else:
-                use_sample_weight = imbalance_ratio > 1.5
 
-            if use_sample_weight:
+            if sample_weight is not None:
+                use_sample_weight = True
+                train_data = train_data.copy()
+                train_data[sample_weight_col] = sample_weight.values
+                logger.info(f"使用传入的 sample_weight，imbalance_ratio={imbalance_ratio:.2f}")
+            elif strategy is not None:
+                # 策略未指定时，按 imbalance_ratio 自动兜底
+                use_sample_weight = strategy.get("use_sample_weight", imbalance_ratio > 1.5)
+                if use_sample_weight:
+                    sample_weights = compute_sample_weight("balanced", y_train)
+                    train_data = train_data.copy()
+                    train_data[sample_weight_col] = sample_weights
+                    logger.info(
+                        f"策略启用 balanced sample_weight，imbalance_ratio={imbalance_ratio:.2f}"
+                    )
+            elif imbalance_ratio > 1.5:
+                use_sample_weight = True
                 sample_weights = compute_sample_weight("balanced", y_train)
                 train_data = train_data.copy()
                 train_data[sample_weight_col] = sample_weights
-                fit_kwargs["sample_weight"] = sample_weight_col
                 logger.info(
-                    f"检测到类别不平衡 (ratio={imbalance_ratio:.2f})，已启用 balanced sample_weight"
+                    f"自动检测到类别不平衡 (ratio={imbalance_ratio:.2f})，已启用 balanced sample_weight"
                 )
+
+        # 确保 fit_kwargs 使用最新的 train_data（可能已加入 sample_weight 列）
+        fit_kwargs["train_data"] = train_data
 
         # 模型复杂度控制：策略 > max_models 启发式
         stacking_config = self._stacking_config(strategy, max_models)
@@ -106,12 +121,15 @@ class AutoMLService:
                 fit_kwargs["holdout_frac"] = holdout_frac
 
         # 训练模型
-        predictor = TabularPredictor(
-            label=target_column,
-            problem_type=self._map_task_type(task_type),
-            eval_metric=primary_metric,
-            path=str(self.model_dir),
-        ).fit(**fit_kwargs)
+        predictor_kwargs = {
+            "label": target_column,
+            "problem_type": self._map_task_type(task_type),
+            "eval_metric": primary_metric,
+            "path": str(self.model_dir),
+        }
+        if use_sample_weight:
+            predictor_kwargs["sample_weight"] = sample_weight_col
+        predictor = TabularPredictor(**predictor_kwargs).fit(**fit_kwargs)
 
         # 保存模型（AutoGluon 已经保存到 path，这里显式调用确保）
         predictor.save()

@@ -185,6 +185,28 @@
     </div>
 
     <div class="card">
+        <h2>采样策略</h2>
+        <div class="info-row">
+            <div class="info-item">
+                <div class="info-label">采样方法</div>
+                <div class="info-value">{{ strategy.sampling.method if strategy.sampling else 'none' }}</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">不平衡比例</div>
+                <div class="info-value">{{ "%.2f"|format(strategy.sampling.imbalance_ratio) if strategy.sampling and strategy.sampling.imbalance_ratio is not none else '-' }}</div>
+            </div>
+        </div>
+        <div style="margin-top: 16px;">
+            <div class="info-label">策略依据</div>
+            <ul style="margin: 8px 0; padding-left: 20px; color: #666;">
+                {% for item in strategy.sampling.rationale %}
+                <li>{{ item }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+
+    <div class="card">
         <h2>评估指标</h2>
         <div class="metric-grid">
             {% for name, value in metrics.items() %}

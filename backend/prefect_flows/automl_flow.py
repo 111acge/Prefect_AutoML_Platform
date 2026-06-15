@@ -19,6 +19,7 @@ from services.data_service import load_dataframe, analyze_metadata
 from services.automl import AutoMLService
 from services.preprocessing import clean_dataframe, engineer_features, split_data
 from services.preprocessing_pipeline import DataPreprocessor, save_feature_columns
+from services.sampling_service import build_sampling_strategy, apply_sampling
 from services.training_strategy import build_strategy
 from services.visualization import generate_report_plots
 
@@ -105,6 +106,46 @@ def build_strategy_task(
 
 
 @task
+def build_sampling_strategy_task(
+    train_df: pd.DataFrame,
+    target_column: str,
+    task_type: str,
+) -> Dict[str, Any]:
+    """根据训练集构建采样策略。"""
+    strategy = build_sampling_strategy(train_df, target_column, task_type)
+    logger.info(
+        f"采样策略: method={strategy.method}, imbalance_ratio={strategy.imbalance_ratio}"
+    )
+    return strategy.to_dict()
+
+
+@task
+def apply_sampling_task(
+    train_df: pd.DataFrame,
+    target_column: str,
+    sampling_strategy: Dict[str, Any],
+) -> Dict[str, Any]:
+    """应用采样策略，返回采样后的训练集和可选样本权重。"""
+    from services.sampling_service import SamplingStrategy
+
+    strategy = SamplingStrategy(
+        method=sampling_strategy["method"],
+        params=sampling_strategy.get("params", {}),
+        rationale=sampling_strategy.get("rationale", []),
+        imbalance_ratio=sampling_strategy.get("imbalance_ratio"),
+    )
+    sampled_df, sample_weight = apply_sampling(train_df, target_column, strategy)
+    logger.info(
+        f"采样完成: method={strategy.method}, "
+        f"original={train_df.shape}, sampled={sampled_df.shape}"
+    )
+    return {
+        "sampled_train_df": sampled_df,
+        "sample_weight": sample_weight,
+    }
+
+
+@task
 def train_model_task(
     train_data: pd.DataFrame,
     target_column: str,
@@ -116,6 +157,7 @@ def train_model_task(
     seed: Optional[int] = None,
     max_models: int = 50,
     strategy: Optional[Dict[str, Any]] = None,
+    sample_weight: Optional[pd.Series] = None,
 ) -> Dict[str, Any]:
     """训练模型任务。"""
     automl = AutoMLService(Path(output_dir))
@@ -129,6 +171,7 @@ def train_model_task(
         seed=seed,
         max_models=max_models,
         strategy=strategy,
+        sample_weight=sample_weight,
     )
     logger.info(f"模型训练完成: {result['primary_metric']}")
     return result
@@ -401,9 +444,15 @@ def automl_pipeline(
     train_df = split_result["train"]
     test_df = split_result["test"]
 
-    # 7. 训练模型
+    # 7. 条件采样（仅在训练集上）
+    sampling_strategy = build_sampling_strategy_task(train_df, target_column, task_type)
+    sampling_result = apply_sampling_task(train_df, target_column, sampling_strategy)
+    sampled_train_df = sampling_result["sampled_train_df"]
+    sample_weight = sampling_result["sample_weight"]
+
+    # 8. 训练模型
     train_result = train_model_task(
-        train_data=train_df,
+        train_data=sampled_train_df,
         target_column=target_column,
         task_type=task_type,
         output_dir=output_dir,
@@ -413,12 +462,14 @@ def automl_pipeline(
         seed=seed,
         max_models=strategy["max_models"],
         strategy=strategy,
+        sample_weight=sample_weight,
     )
 
-    # 8. 评估（测试集为主，训练集为参考）
+    # 9. 评估（测试集为主，训练集为参考）
     metrics = evaluate_model_task(test_df, train_df, target_column, output_dir)
 
     # 9. 生成 HTML 报告
+    strategy["sampling"] = sampling_strategy
     report_path = generate_report_task(
         run_id=Path(output_dir).name,
         output_dir=output_dir,
