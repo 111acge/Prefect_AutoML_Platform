@@ -124,20 +124,21 @@ def train_model_task(
 @task
 def evaluate_model_task(
     test_data: pd.DataFrame,
+    train_data: pd.DataFrame,
     target_column: str,
     output_dir: str,
 ) -> Dict[str, float]:
-    """评估模型任务，生成标准指标和扩展指标。"""
+    """评估模型任务，生成测试集标准指标、扩展指标和训练集参考指标。"""
     from autogluon.tabular import TabularPredictor
 
     model_path = Path(output_dir) / "autogluon_models"
     predictor = TabularPredictor.load(str(model_path))
 
     # 使用测试集评估，生成标准指标字典
-    performance = predictor.evaluate(test_data)
-    metrics = {"final": {str(k): float(v) for k, v in performance.items()}}
+    test_performance = predictor.evaluate(test_data)
+    metrics = {"final": {str(k): float(v) for k, v in test_performance.items()}}
 
-    # 扩展指标
+    # 扩展指标（测试集）
     X_test = test_data.drop(columns=[target_column])
     y_true = test_data[target_column]
     y_pred = predictor.predict(X_test)
@@ -145,12 +146,20 @@ def evaluate_model_task(
     if extended:
         metrics["extended"] = extended
 
+    # 训练集参考指标
+    try:
+        train_performance = predictor.evaluate(train_data)
+        metrics["train"] = {str(k): float(v) for k, v in train_performance.items()}
+    except Exception as e:
+        logger.warning(f"训练集评估失败: {e}")
+        metrics["train"] = {}
+
     # 保存指标到 JSON
     metrics_path = Path(output_dir) / "metrics.json"
     with open(metrics_path, "w", encoding="utf-8") as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2, default=str)
 
-    logger.info(f"模型评估完成: {metrics['final']}")
+    logger.info(f"模型评估完成: test={metrics['final']}, train={metrics.get('train', {})}")
     return metrics
 
 
@@ -390,8 +399,8 @@ def automl_pipeline(
         max_models=max_models,
     )
 
-    # 8. 评估
-    metrics = evaluate_model_task(test_df, target_column, output_dir)
+    # 8. 评估（测试集为主，训练集为参考）
+    metrics = evaluate_model_task(test_df, train_df, target_column, output_dir)
 
     # 9. 生成 HTML 报告
     report_path = generate_report_task(

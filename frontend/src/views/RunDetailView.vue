@@ -30,7 +30,7 @@
         <span>训练结果</span>
       </template>
 
-      <h3>评估指标</h3>
+      <h3>测试集评估指标（主指标）</h3>
       <el-row :gutter="20" class="metric-row">
         <el-col :span="4" v-for="(value, key) in results.metrics" :key="key">
           <div class="metric-item">
@@ -39,6 +39,18 @@
           </div>
         </el-col>
       </el-row>
+
+      <template v-if="results.train_metrics && Object.keys(results.train_metrics).length > 0">
+        <h3>训练集参考指标</h3>
+        <el-row :gutter="20" class="metric-row">
+          <el-col :span="4" v-for="(value, key) in results.train_metrics" :key="key">
+            <div class="metric-item metric-item-train">
+              <div class="metric-label">{{ key }}</div>
+              <div class="metric-value">{{ typeof value === 'number' ? value.toFixed(4) : value }}</div>
+            </div>
+          </el-col>
+        </el-row>
+      </template>
 
       <template v-if="results.extended_metrics && extendedMetricItems.length > 0">
         <h3>扩展评估指标</h3>
@@ -411,6 +423,10 @@ onUnmounted(() => {
   padding: 15px;
   background-color: #f5f7fa;
   border-radius: 4px;
+}
+
+.metric-item-train {
+  background-color: #fdf6ec;
 }
 
 .metric-label {

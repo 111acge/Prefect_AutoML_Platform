@@ -111,6 +111,7 @@ class RunResult(BaseModel):
     status: str
     metrics: Dict[str, float]
     extended_metrics: Optional[Dict[str, Any]] = None
+    train_metrics: Optional[Dict[str, float]] = None
     leaderboard: List[Dict[str, Any]]
     feature_importance: List[Dict[str, Any]]
     model_path: Optional[str]

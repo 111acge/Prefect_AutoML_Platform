@@ -175,6 +175,7 @@ async def get_run_results(run_id: str, db: AsyncSession = Depends(get_db)):
         # 读取指标
         metrics = {}
         extended_metrics = None
+        train_metrics = None
         metrics_path = output_dir / "metrics.json"
         if metrics_path.exists():
             with open(metrics_path, "r", encoding="utf-8") as f:
@@ -184,6 +185,11 @@ async def get_run_results(run_id: str, db: AsyncSession = Depends(get_db)):
                     str(k): float(v) for k, v in final.items() if isinstance(v, (int, float))
                 }
                 extended_metrics = metrics_data.get("extended")
+                train_metrics = {
+                    str(k): float(v)
+                    for k, v in metrics_data.get("train", {}).items()
+                    if isinstance(v, (int, float))
+                }
 
         # 读取排行榜
         leaderboard = []
@@ -206,6 +212,7 @@ async def get_run_results(run_id: str, db: AsyncSession = Depends(get_db)):
             status=run.status,
             metrics=metrics,
             extended_metrics=extended_metrics,
+            train_metrics=train_metrics if train_metrics else None,
             leaderboard=leaderboard,
             feature_importance=feature_importance,
             model_path=(
