@@ -285,7 +285,7 @@ const featureImportanceOption = computed(() => {
   if (!data.length) return {}
 
   const sorted = [...data].sort((a, b) => a.importance - b.importance)
-  const names = sorted.map((row) => row[''] || row.feature || '未知')
+  const names = sorted.map((row) => row.feature || row['Unnamed: 0'] || row[''] || '未知')
   const values = sorted.map((row) => row.importance)
 
   return {
@@ -357,7 +357,7 @@ const submitPredict = async () => {
 }
 
 const downloadReport = () => {
-  window.open(`/api/runs/${runId}/report`, '_blank')
+  window.open(`/api/runs/${runId}/report?download=1`, '_blank')
 }
 
 const downloadModel = () => {

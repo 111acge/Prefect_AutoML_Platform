@@ -288,8 +288,17 @@ async def predict(run_id: str, request: PredictionRequest, db: AsyncSession = De
 
 
 @router.get("/{run_id}/report")
-async def download_report(run_id: str, db: AsyncSession = Depends(get_db)):
-    """下载 HTML 报告。"""
+async def download_report(
+    run_id: str,
+    download: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
+    """获取或下载 HTML 报告。
+
+    Args:
+        download: 为 True 时返回 attachment 强制下载；
+                  为 False 时返回 inline，可用于 iframe 预览。
+    """
     result = await db.execute(select(Run).where(Run.id == run_id))
     run = result.scalar_one_or_none()
     if not run:
@@ -302,7 +311,8 @@ async def download_report(run_id: str, db: AsyncSession = Depends(get_db)):
     return FileResponse(
         str(report_path),
         media_type="text/html",
-        filename=f"report_{run_id}.html",
+        filename=f"report_{run_id}.html" if download else None,
+        content_disposition_type="attachment" if download else "inline",
     )
 
 

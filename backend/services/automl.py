@@ -108,7 +108,10 @@ class AutoMLService:
         try:
             importance = predictor.feature_importance(train_data, silent=True)
             importance_path = self.output_dir / "feature_importance.csv"
-            importance.to_csv(importance_path)
+            # 将索引（特征名）转为 feature 列，避免前端/报告读取困难
+            importance.reset_index().rename(columns={"index": "feature"}).to_csv(
+                importance_path, index=False
+            )
         except Exception as e:
             logger.warning(f"特征重要性计算失败: {e}")
             importance = None
