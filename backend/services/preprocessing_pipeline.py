@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 import joblib
 import numpy as np
@@ -23,13 +23,16 @@ class DataPreprocessor(BaseEstimator, TransformerMixin):
     - 数值列缺失值填充（中位数）
     - 类别列缺失值填充（众数 / "missing"）
     - 右偏非负数值列的对数变换
+    - 时间特征提取（根据策略启用）
     """
 
-    def __init__(self, target_column: str):
+    def __init__(self, target_column: str, strategy: Optional[Dict[str, Any]] = None):
         self.target_column = target_column
+        self.strategy = strategy or {}
         self.numeric_fill_values: Dict[str, float] = {}
         self.categorical_fill_values: Dict[str, str] = {}
         self.log_transform_cols: List[str] = []
+        self.datetime_cols: List[str] = []
         self.feature_columns: List[str] = []
         self.feature_dtypes: Dict[str, str] = {}
 
@@ -67,10 +70,20 @@ class DataPreprocessor(BaseEstimator, TransformerMixin):
 
         # 对数变换：右偏非负数值列
         self.log_transform_cols = []
+        log_skew_threshold = self.strategy.get("preprocessing", {}).get("log_skew_threshold", 1.0)
         for col in numeric_cols:
             series = df[col].dropna()
-            if series.min() >= 0 and series.skew() > 1.0:
+            if series.min() >= 0 and series.skew() > log_skew_threshold:
                 self.log_transform_cols.append(col)
+
+        # 时间特征提取
+        self.datetime_cols = []
+        if self.strategy.get("preprocessing", {}).get("datetime_features", False):
+            for col in df.columns:
+                if col == self.target_column:
+                    continue
+                if pd.api.types.is_datetime64_any_dtype(df[col]):
+                    self.datetime_cols.append(col)
 
         # 记录特征列（排除目标列）
         self.feature_columns = [c for c in df.columns if c != self.target_column]
@@ -135,6 +148,15 @@ class DataPreprocessor(BaseEstimator, TransformerMixin):
         for col in self.log_transform_cols:
             if col in df.columns:
                 df[f"{col}_log"] = np.log1p(df[col].clip(lower=0))
+
+        # 时间特征提取
+        for col in self.datetime_cols:
+            if col in df.columns:
+                dt = pd.to_datetime(df[col], errors="coerce")
+                df[f"{col}_year"] = dt.dt.year
+                df[f"{col}_month"] = dt.dt.month
+                df[f"{col}_day"] = dt.dt.day
+                df[f"{col}_dayofweek"] = dt.dt.dayofweek
 
         return df
 

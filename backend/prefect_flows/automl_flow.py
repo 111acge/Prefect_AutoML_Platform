@@ -19,6 +19,7 @@ from services.data_service import load_dataframe, analyze_metadata
 from services.automl import AutoMLService
 from services.preprocessing import clean_dataframe, engineer_features, split_data
 from services.preprocessing_pipeline import DataPreprocessor, save_feature_columns
+from services.training_strategy import build_strategy
 from services.visualization import generate_report_plots
 
 logger = logging.getLogger(__name__)
@@ -82,15 +83,25 @@ def split_data_task(
 
 
 @task
-def select_strategy_task(metadata: Dict[str, Any]) -> str:
-    """选择训练策略。"""
-    n_samples = metadata.get("n_samples", 1000)
-    n_features = metadata.get("n_features", 10)
-
-    # 大数据场景使用更轻量的 preset
-    if n_samples > 100_000 or n_features > 500:
-        return "medium_quality"
-    return "best_quality"
+def build_strategy_task(
+    metadata: Dict[str, Any],
+    task_type: str,
+    time_budget_minutes: float,
+    preset: Optional[str] = None,
+    primary_metric: Optional[str] = None,
+    max_models: Optional[int] = None,
+) -> Dict[str, Any]:
+    """根据数据元数据构建训练策略。"""
+    strategy = build_strategy(
+        metadata=metadata,
+        task_type=task_type,
+        user_time_budget_minutes=time_budget_minutes,
+        user_preset=preset,
+        user_primary_metric=primary_metric,
+        user_max_models=max_models,
+    )
+    logger.info(f"训练策略: {strategy.to_dict()}")
+    return strategy.to_dict()
 
 
 @task
@@ -104,6 +115,7 @@ def train_model_task(
     primary_metric: Optional[str],
     seed: Optional[int] = None,
     max_models: int = 50,
+    strategy: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """训练模型任务。"""
     automl = AutoMLService(Path(output_dir))
@@ -116,6 +128,7 @@ def train_model_task(
         primary_metric=primary_metric,
         seed=seed,
         max_models=max_models,
+        strategy=strategy,
     )
     logger.info(f"模型训练完成: {result['primary_metric']}")
     return result
@@ -260,7 +273,7 @@ def generate_report_task(
     run_id: str,
     output_dir: str,
     metadata: Dict[str, Any],
-    preset: str,
+    strategy: Dict[str, Any],
     primary_metric: Optional[str],
     task_type: str,
     seed: Optional[int] = None,
@@ -310,7 +323,8 @@ def generate_report_task(
     html_content = template.render(
         run_id=run_id,
         status="completed",
-        preset=preset,
+        preset=strategy.get("preset"),
+        strategy=strategy,
         primary_metric=primary_metric,
         seed=seed,
         metadata=metadata,
@@ -365,16 +379,18 @@ def automl_pipeline(
     # 3. 元数据分析（基于原始数据）
     metadata = analyze_metadata_task(df, target_column)
 
-    # 4. 策略路由
-    selected_preset = select_strategy_task(metadata)
-    if preset is not None:  # 允许用户覆盖
-        selected_preset = preset
+    # 4. 策略路由（数据驱动）
+    strategy = build_strategy_task(
+        metadata=metadata,
+        task_type=task_type,
+        time_budget_minutes=max(time_budget_minutes, 0.5),
+        preset=preset,
+        primary_metric=primary_metric,
+        max_models=max_models,
+    )
 
-    # 限制最小训练时间，避免 AutoGluon 因时间过短失败
-    effective_time_budget = max(time_budget_minutes, 0.5)
-
-    # 5. 拟合并应用预处理 Pipeline
-    preprocessor = DataPreprocessor(target_column=target_column)
+    # 5. 拟合并应用预处理 Pipeline（按策略执行）
+    preprocessor = DataPreprocessor(target_column=target_column, strategy=strategy)
     df = preprocessor.fit_transform(df)
     preprocessor.save(Path(output_dir) / "preprocessing_pipeline.joblib")
     save_feature_columns(output_dir, preprocessor.feature_columns)
@@ -386,17 +402,17 @@ def automl_pipeline(
     test_df = split_result["test"]
 
     # 7. 训练模型
-    time_limit = effective_time_budget * 60
     train_result = train_model_task(
         train_data=train_df,
         target_column=target_column,
         task_type=task_type,
         output_dir=output_dir,
-        time_limit=time_limit,
-        preset=selected_preset,
-        primary_metric=primary_metric,
+        time_limit=strategy["time_limit_seconds"],
+        preset=strategy["preset"],
+        primary_metric=strategy["primary_metric"],
         seed=seed,
-        max_models=max_models,
+        max_models=strategy["max_models"],
+        strategy=strategy,
     )
 
     # 8. 评估（测试集为主，训练集为参考）
@@ -407,8 +423,8 @@ def automl_pipeline(
         run_id=Path(output_dir).name,
         output_dir=output_dir,
         metadata=metadata,
-        preset=selected_preset,
-        primary_metric=primary_metric,
+        strategy=strategy,
+        primary_metric=strategy.get("primary_metric"),
         task_type=task_type,
         seed=seed,
     )
@@ -416,7 +432,7 @@ def automl_pipeline(
     return {
         "status": "completed",
         "metadata": metadata,
-        "preset": selected_preset,
+        "strategy": strategy,
         "train_result": train_result,
         "metrics": metrics,
         "report_path": report_path,

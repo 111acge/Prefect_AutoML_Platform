@@ -80,6 +80,7 @@
         </el-form-item>
         <el-form-item label="Preset">
           <el-select v-model="createForm.preset" style="width: 100%">
+            <el-option label="自动选择（推荐）" value="auto" />
             <el-option label="medium_quality" value="medium_quality" />
             <el-option label="best_quality" value="best_quality" />
           </el-select>
@@ -118,7 +119,7 @@ const createForm = ref({
   target_column: '',
   task_type: 'binary_classification',
   time_budget_minutes: 10,
-  preset: 'medium_quality',
+  preset: 'auto',
   seed: null,
 })
 

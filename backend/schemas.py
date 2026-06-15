@@ -82,7 +82,7 @@ class RunCreate(BaseModel):
     primary_metric: Optional[str] = None
     time_budget_minutes: float = Field(default=10, ge=0.1, le=180)
     max_models: int = Field(default=50, ge=1, le=200)
-    preset: str = Field(default="medium_quality")
+    preset: Optional[str] = Field(default="auto")
     seed: Optional[int] = Field(default=None, ge=0)
 
 

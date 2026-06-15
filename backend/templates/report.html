@@ -151,6 +151,40 @@
     </div>
 
     <div class="card">
+        <h2>训练策略</h2>
+        <div class="info-row">
+            <div class="info-item">
+                <div class="info-label">数据规模</div>
+                <div class="info-value">{{ strategy.data_size_label }}</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">Preset</div>
+                <div class="info-value">{{ strategy.preset }}</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">时间限制</div>
+                <div class="info-value">{{ strategy.time_limit_seconds }} s</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">最大模型数</div>
+                <div class="info-value">{{ strategy.max_models }}</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">Stacking</div>
+                <div class="info-value">{% if strategy.auto_stack %}开{% else %}关{% endif %}</div>
+            </div>
+        </div>
+        <div style="margin-top: 16px;">
+            <div class="info-label">策略依据</div>
+            <ul style="margin: 8px 0; padding-left: 20px; color: #666;">
+                {% for item in strategy.rationale %}
+                <li>{{ item }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+
+    <div class="card">
         <h2>评估指标</h2>
         <div class="metric-grid">
             {% for name, value in metrics.items() %}

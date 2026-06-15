@@ -39,8 +39,16 @@ class AutoMLService:
         primary_metric: Optional[str] = None,
         seed: Optional[int] = None,
         max_models: int = 50,
+        strategy: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """训练 AutoGluon 模型。"""
+
+        # 如果提供了数据驱动策略，优先从策略中读取配置
+        if strategy is not None:
+            preset = strategy.get("preset", preset)
+            time_limit = strategy.get("time_limit_seconds", time_limit)
+            max_models = strategy.get("max_models", max_models)
+            primary_metric = strategy.get("primary_metric", primary_metric)
 
         # 根据任务类型选择评估指标
         if primary_metric is None:
@@ -52,11 +60,11 @@ class AutoMLService:
             logger.info(f"设置随机种子: {seed}")
 
         logger.info(
-            f"开始训练: target={target_column}, task={task_type}, "
+            f"开始训练: target={target_column}, task={task_type}, preset={preset}, "
             f"metric={primary_metric}, max_models={max_models}"
         )
 
-        fit_kwargs = {
+        fit_kwargs: Dict[str, Any] = {
             "train_data": train_data,
             "presets": preset,
             "time_limit": time_limit,
@@ -64,13 +72,20 @@ class AutoMLService:
         if seed is not None:
             fit_kwargs["hyperparameters"] = self._hyperparameters_with_seed(seed)
 
-        # 类别不平衡处理：对分类任务自动计算样本权重列
+        # 类别不平衡处理：优先使用策略决策，否则自动计算
         sample_weight_col = "_sample_weight"
+        use_sample_weight = False
+        imbalance_ratio = None
         if self._map_task_type(task_type) in ["binary", "multiclass"]:
             y_train = train_data[target_column]
             class_counts = y_train.value_counts()
-            imbalance_ratio = class_counts.max() / class_counts.min()
-            if imbalance_ratio > 1.5:
+            imbalance_ratio = float(class_counts.max() / class_counts.min())
+            if strategy is not None:
+                use_sample_weight = strategy.get("use_sample_weight", False)
+            else:
+                use_sample_weight = imbalance_ratio > 1.5
+
+            if use_sample_weight:
                 sample_weights = compute_sample_weight("balanced", y_train)
                 train_data = train_data.copy()
                 train_data[sample_weight_col] = sample_weights
@@ -79,14 +94,16 @@ class AutoMLService:
                     f"检测到类别不平衡 (ratio={imbalance_ratio:.2f})，已启用 balanced sample_weight"
                 )
 
-        # 根据 max_models 控制模型复杂度
-        if max_models <= 10:
-            fit_kwargs["auto_stack"] = False
-            fit_kwargs["num_bag_folds"] = 0
-            fit_kwargs["num_stack_levels"] = 0
-        elif max_models <= 30:
-            fit_kwargs["num_bag_folds"] = 3
-            fit_kwargs["num_stack_levels"] = 1
+        # 模型复杂度控制：策略 > max_models 启发式
+        stacking_config = self._stacking_config(strategy, max_models)
+        fit_kwargs.update(stacking_config)
+
+        # 验证策略：holdout_frac 等
+        if strategy is not None:
+            validation_strategy = strategy.get("validation_strategy", {})
+            holdout_frac = validation_strategy.get("holdout_frac")
+            if holdout_frac is not None:
+                fit_kwargs["holdout_frac"] = holdout_frac
 
         # 训练模型
         predictor = TabularPredictor(
@@ -164,6 +181,22 @@ class AutoMLService:
                 logger.warning(f"概率预测失败: {e}")
 
         return result
+
+    def _stacking_config(
+        self, strategy: Optional[Dict[str, Any]], max_models: int
+    ) -> Dict[str, Any]:
+        """生成 stacking/bagging 配置。"""
+        if strategy is not None:
+            return {
+                "auto_stack": strategy.get("auto_stack", False),
+                "num_bag_folds": strategy.get("num_bag_folds", 0),
+                "num_stack_levels": strategy.get("num_stack_levels", 0),
+            }
+        if max_models <= 10:
+            return {"auto_stack": False, "num_bag_folds": 0, "num_stack_levels": 0}
+        elif max_models <= 30:
+            return {"num_bag_folds": 3, "num_stack_levels": 1}
+        return {}
 
     def _hyperparameters_with_seed(self, seed: int) -> Dict[str, Any]:
         """生成带固定种子的超参配置（覆盖常见模型）。"""

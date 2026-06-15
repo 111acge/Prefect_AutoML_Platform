@@ -63,7 +63,7 @@
             <el-collapse-item title="1. 任务概览" name="overview">
               <p>报告顶部会展示任务 ID、状态、Preset、主要指标、随机种子、样本数、特征数等基本信息。</p>
               <ul>
-                <li><b>Preset</b>：训练质量预设。medium_quality 速度较快，best_quality 精度更高但耗时更长。</li>
+                <li><b>Preset</b>：训练质量预设。选择「自动选择」时，系统会根据数据规模、特征数、内存等自动选择；也可以手动指定 medium_quality 或 best_quality。</li>
                 <li><b>随机种子</b>：固定后可使数据划分和模型初始化更可复现；留空则由系统随机决定。</li>
                 <li><b>样本数 / 特征数</b>：训练数据的总行数与总列数（含目标列）。</li>
               </ul>

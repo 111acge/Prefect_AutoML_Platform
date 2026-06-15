@@ -167,6 +167,7 @@ class TrainingExecutor:
             cmd.extend(["--primary-metric", job.primary_metric])
         if job.seed is not None:
             cmd.extend(["--seed", str(job.seed)])
+        cmd.extend(["--max-models", str(job.max_models)])
 
         env = os.environ.copy()
         env["PREFECT_API_URL"] = ""
