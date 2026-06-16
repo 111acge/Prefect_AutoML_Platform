@@ -20,10 +20,10 @@ nohup uvicorn main:app --host 0.0.0.0 --port 8001 > "$PROJECT_ROOT/logs/backend.
 BACKEND_PID=$!
 echo $BACKEND_PID > "$PROJECT_ROOT/logs/backend.pid"
 
-# 启动前端
+# 启动前端（使用 vite dev server，利用其 /api 代理到后端，仅需暴露 8084 端口）
 cd "$PROJECT_ROOT/frontend"
 echo "🚀 启动前端服务 (端口 8084)..."
-nohup npm run preview > "$PROJECT_ROOT/logs/frontend.log" 2>&1 &
+nohup npm run dev > "$PROJECT_ROOT/logs/frontend.log" 2>&1 &
 FRONTEND_PID=$!
 echo $FRONTEND_PID > "$PROJECT_ROOT/logs/frontend.pid"
 

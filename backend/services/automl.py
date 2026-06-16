@@ -9,13 +9,20 @@ import numpy as np
 import pandas as pd
 from autogluon.tabular import TabularPredictor
 from sklearn.utils.class_weight import compute_sample_weight
-from services.explainability import compute_shap_values
+from services.explainability import compute_shap_values, compute_permutation_importance
 
 logger = logging.getLogger(__name__)
 
 
 class AutoMLService:
     """AutoML 训练服务封装。"""
+
+    # 内部/通用指标名 -> AutoGluon 可识别的指标名
+    METRIC_ALIASES = {
+        "auc_pr": "average_precision",
+        "auc-pr": "average_precision",
+        "average_precision_score": "average_precision",
+    }
 
     def __init__(self, output_dir: Path):
         self.output_dir = output_dir
@@ -55,6 +62,9 @@ class AutoMLService:
         if primary_metric is None:
             primary_metric = self._auto_select_metric(train_data[target_column], task_type)
 
+        # 将通用指标别名映射为 AutoGluon 合法名称
+        primary_metric = self._normalize_metric_name(primary_metric, task_type)
+
         if seed is not None:
             random.seed(seed)
             np.random.seed(seed)
@@ -70,8 +80,10 @@ class AutoMLService:
             "presets": preset,
             "time_limit": time_limit,
         }
-        if seed is not None:
-            fit_kwargs["hyperparameters"] = self._hyperparameters_with_seed(seed)
+        # 动态模型空间
+        hyperparameters = self._select_hyperparameters(strategy, seed)
+        if hyperparameters:
+            fit_kwargs["hyperparameters"] = hyperparameters
 
         # 类别不平衡处理：优先使用传入的样本权重，其次按策略，最后自动兜底
         sample_weight_col = "_sample_weight"
@@ -113,12 +125,18 @@ class AutoMLService:
         stacking_config = self._stacking_config(strategy, max_models)
         fit_kwargs.update(stacking_config)
 
-        # 验证策略：holdout_frac 等
+        # 验证策略：holdout / CV 透传给 AutoGluon
         if strategy is not None:
             validation_strategy = strategy.get("validation_strategy", {})
-            holdout_frac = validation_strategy.get("holdout_frac")
-            if holdout_frac is not None:
-                fit_kwargs["holdout_frac"] = holdout_frac
+            if validation_strategy.get("name") == "cv":
+                # 使用 bagging 实现 KFold CV；移除 holdout_frac 避免冲突
+                fit_kwargs["num_bag_folds"] = validation_strategy.get("n_folds", 5)
+                fit_kwargs.pop("holdout_frac", None)
+                logger.info(f"启用 CV: num_bag_folds={fit_kwargs['num_bag_folds']}")
+            else:
+                holdout_frac = validation_strategy.get("holdout_frac")
+                if holdout_frac is not None:
+                    fit_kwargs["holdout_frac"] = holdout_frac
 
         # 训练模型
         predictor_kwargs = {
@@ -139,6 +157,14 @@ class AutoMLService:
         leaderboard_path = self.output_dir / "leaderboard.csv"
         leaderboard.to_csv(leaderboard_path, index=False)
 
+        # 集成验证回退：集成提升不足 2% 时回退到最优单模型
+        ensemble_fallback = self._apply_ensemble_fallback(predictor, leaderboard)
+        if ensemble_fallback.get("fallback_applied"):
+            logger.info(
+                f"集成回退: {ensemble_fallback.get('top_model')} -> "
+                f"{ensemble_fallback.get('best_single_model')}"
+            )
+
         # 特征重要性
         try:
             importance = predictor.feature_importance(train_data, silent=True)
@@ -155,6 +181,12 @@ class AutoMLService:
         shap_train_data = train_data
         if sample_weight_col in train_data.columns:
             shap_train_data = train_data.drop(columns=[sample_weight_col])
+
+        # Permutation Importance（用于泄露检测与无偏重要性）
+        perm_info = compute_permutation_importance(
+            predictor, shap_train_data, target_column, self.output_dir
+        )
+
         shap_info = compute_shap_values(predictor, shap_train_data, target_column, self.output_dir)
 
         return {
@@ -163,7 +195,9 @@ class AutoMLService:
             "feature_importance": importance.to_dict() if importance is not None else None,
             "primary_metric": primary_metric,
             "shap_info": shap_info,
+            "perm_importance": perm_info,
             "imbalance_ratio": imbalance_ratio if "imbalance_ratio" in locals() else None,
+            "ensemble_fallback": ensemble_fallback,
         }
 
     def evaluate(
@@ -200,6 +234,72 @@ class AutoMLService:
 
         return result
 
+    def _apply_ensemble_fallback(
+        self,
+        predictor: TabularPredictor,
+        leaderboard: pd.DataFrame,
+        improvement_threshold: float = 0.02,
+    ) -> Dict[str, Any]:
+        """检查 WeightedEnsemble 是否显著优于最优单模型；否则回退。"""
+        if leaderboard.empty or "model" not in leaderboard.columns:
+            return {"fallback_applied": False, "reason": "leaderboard 为空"}
+
+        score_col = "score_val"
+        if score_col not in leaderboard.columns:
+            score_col = leaderboard.columns[-1]
+
+        sorted_lb = leaderboard.sort_values(score_col, ascending=False)
+        top_model = sorted_lb.iloc[0]
+        top_name = str(top_model["model"])
+
+        if not top_name.startswith("WeightedEnsemble"):
+            return {
+                "fallback_applied": False,
+                "ensemble_used": False,
+                "top_model": top_name,
+            }
+
+        non_ensemble = sorted_lb[~sorted_lb["model"].astype(str).str.startswith("WeightedEnsemble")]
+        if non_ensemble.empty:
+            return {
+                "fallback_applied": False,
+                "ensemble_used": True,
+                "reason": "无单模型可比较",
+                "top_model": top_name,
+            }
+
+        best_single = non_ensemble.iloc[0]
+        best_single_name = str(best_single["model"])
+        top_score = float(top_model[score_col])
+        single_score = float(best_single[score_col])
+        improvement = (top_score - single_score) / max(abs(single_score), 1e-10)
+
+        fallback_applied = improvement <= improvement_threshold
+        result: Dict[str, Any] = {
+            "fallback_applied": fallback_applied,
+            "ensemble_used": True,
+            "top_model": top_name,
+            "best_single_model": best_single_name,
+            "improvement_ratio": round(improvement, 6),
+            "threshold": improvement_threshold,
+        }
+
+        if fallback_applied:
+            try:
+                predictor.set_model_best(best_single_name)
+                # 仅删除集成模型，保留其他单模型
+                ensemble_models = [
+                    m for m in predictor.model_names() if m.startswith("WeightedEnsemble")
+                ]
+                if ensemble_models:
+                    predictor.delete_models(models=ensemble_models)
+                result["models_removed"] = ensemble_models
+            except Exception as e:
+                logger.warning(f"集成回退失败: {e}")
+                result["fallback_error"] = str(e)
+
+        return result
+
     def _stacking_config(
         self, strategy: Optional[Dict[str, Any]], max_models: int
     ) -> Dict[str, Any]:
@@ -230,6 +330,40 @@ class AutoMLService:
             "NN_TORCH": {"seed_value": seed},
         }
 
+    def _select_hyperparameters(
+        self, strategy: Optional[Dict[str, Any]], seed: Optional[int]
+    ) -> Optional[Dict[str, Any]]:
+        """根据策略动态选择模型搜索空间。"""
+        if strategy is None:
+            return self._hyperparameters_with_seed(seed) if seed is not None else None
+
+        if strategy.get("hyperparameters"):
+            return strategy["hyperparameters"]
+
+        data_size_label = strategy.get("data_size_label", "medium")
+        if data_size_label == "small":
+            # 小数据尝试更多模型，包括 KNN / LR / NN
+            hp: Dict[str, Any] = {
+                "GBM": [{"extra_trees": False}, {"extra_trees": True}],
+                "CAT": {},
+                "XGB": {},
+                "RF": {},
+                "XT": {},
+                "KNN": {},
+                "LR": {},
+            }
+            if seed is not None:
+                hp["NN_TORCH"] = {"seed_value": seed}
+            return hp
+        elif data_size_label == "large":
+            # 大数据聚焦高效线性/树模型
+            return {"GBM": {}, "CAT": {}, "XGB": {}, "LR": {}}
+        else:
+            # 中等规模默认模型空间
+            if seed is not None:
+                return self._hyperparameters_with_seed(seed)
+            return {"GBM": {}, "CAT": {}, "XGB": {}, "RF": {}, "XT": {}}
+
     def _map_task_type(self, task_type: str) -> Optional[str]:
         """映射任务类型到 AutoGluon problem_type。"""
         mapping = {
@@ -239,14 +373,26 @@ class AutoMLService:
         }
         return mapping.get(task_type)
 
+    def _normalize_metric_name(self, metric: Optional[str], task_type: str) -> str:
+        """把内部/用户输入的指标别名转换为 AutoGluon 合法名称。"""
+        if not metric:
+            return self._auto_select_metric(pd.Series([0, 1]), task_type)
+        normalized = self.METRIC_ALIASES.get(metric, metric)
+        return normalized
+
     def _auto_select_metric(self, y: pd.Series, task_type: str) -> str:
-        """自动选择评估指标。"""
+        """自动选择评估指标。
+
+        - 二分类不平衡 -> AUC-PR (AutoGluon 中为 average_precision)
+        - 二分类平衡 -> F1
+        - 多分类 -> log_loss
+        - 回归 -> RMSE
+        """
         if task_type == "binary_classification":
-            # 检查是否不平衡
             class_counts = y.value_counts()
             imbalance_ratio = class_counts.max() / class_counts.min()
             if imbalance_ratio > 3:
-                return "roc_auc"
+                return "average_precision"
             return "f1"
         elif task_type == "multiclass_classification":
             return "log_loss"

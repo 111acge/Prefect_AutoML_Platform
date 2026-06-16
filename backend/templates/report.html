@@ -151,6 +151,73 @@
     </div>
 
     <div class="card">
+        <h2>数据质量摘要</h2>
+        <div class="metric-grid">
+            <div class="metric-card">
+                <div class="metric-name">综合得分</div>
+                <div class="metric-value">{{ "%.2f"|format((quality.overall_score or 0) * 100) }}%</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-name">样本数</div>
+                <div class="metric-value">{{ quality.n_rows or metadata.n_samples }}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-name">特征数</div>
+                <div class="metric-value">{{ quality.n_features or metadata.n_features }}</div>
+            </div>
+        </div>
+        {% if quality.completeness %}
+        <table>
+            <thead>
+                <tr>
+                    <th>维度</th>
+                    <th>得分</th>
+                    <th>关键问题</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for dim in ['completeness', 'consistency', 'accuracy', 'timeliness', 'uniqueness', 'validity'] %}
+                {% set dim_info = quality[dim] %}
+                {% if dim_info %}
+                <tr>
+                    <td>{{ dim }}</td>
+                    <td>{{ "%.2f"|format((dim_info.score or 0) * 100) }}%</td>
+                    <td>
+                        {% if dim == 'completeness' and dim_info.columns_with_missing %}
+                            缺失列: {{ dim_info.columns_with_missing[:5]|join(', ') }}
+                        {% elif dim == 'consistency' and dim_info.constant_columns %}
+                            常量列: {{ dim_info.constant_columns[:5]|join(', ') }}
+                        {% elif dim == 'accuracy' and dim_info.outlier_summary %}
+                            异常值列: {{ dim_info.outlier_summary.keys()|list|join(', ') }}
+                        {% elif dim == 'timeliness' and dim_info.future_date_issues %}
+                            未来日期: {{ dim_info.future_date_issues|length }} 处
+                        {% elif dim == 'uniqueness' and dim_info.duplicated_rows %}
+                            重复行: {{ dim_info.duplicated_rows }}
+                        {% elif dim == 'validity' and dim_info.rare_category_issues %}
+                            稀有类别列: {{ dim_info.rare_category_issues|map(attribute='column')|list|join(', ') }}
+                        {% else %}
+                            无明显问题
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+        {% if quality.warnings %}
+        <div style="margin-top: 16px;">
+            <div class="info-label">质量警告</div>
+            <ul style="margin: 8px 0; padding-left: 20px; color: #666;">
+                {% for warning in quality.warnings %}
+                <li>{{ warning }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="card">
         <h2>训练策略</h2>
         <div class="info-row">
             <div class="info-item">
@@ -207,6 +274,32 @@
     </div>
 
     <div class="card">
+        <h2>特征工程策略</h2>
+        <div class="info-row">
+            <div class="info-item">
+                <div class="info-label">异常值处理</div>
+                <div class="info-value">{{ strategy.preprocessing.outlier_strategy or 'none' }}</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">数值缩放</div>
+                <div class="info-value">{{ strategy.preprocessing.scaler_type or 'none' }}</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">稀有类别阈值</div>
+                <div class="info-value">{{ strategy.preprocessing.rare_category_threshold }}</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">时间周期特征</div>
+                <div class="info-value">{% if strategy.preprocessing.datetime_cyclical %}开{% else %}关{% endif %}</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">文本 Embedding</div>
+                <div class="info-value">{% if strategy.preprocessing.text_embeddings %}开{% else %}关{% endif %}</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
         <h2>评估指标</h2>
         <div class="metric-grid">
             {% for name, value in metrics.items() %}
@@ -217,6 +310,40 @@
             {% endfor %}
         </div>
     </div>
+
+    {% if metrics_full and (metrics_full.threshold or metrics_full.ensemble_validation) %}
+    <div class="card">
+        <h2>阈值调优与集成验证</h2>
+        <div class="info-row">
+            {% if metrics_full.threshold %}
+            <div class="info-item">
+                <div class="info-label">默认阈值</div>
+                <div class="info-value">{{ metrics_full.threshold.default_threshold }}</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">最优阈值（F1）</div>
+                <div class="info-value">{{ "%.4f"|format(metrics_full.threshold.optimal_threshold) }}</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">最优 F1</div>
+                <div class="info-value">{{ "%.4f"|format(metrics_full.threshold.best_f1) }}</div>
+            </div>
+            {% endif %}
+            {% if metrics_full.ensemble_validation %}
+            <div class="info-item">
+                <div class="info-label">集成提升</div>
+                <div class="info-value">{{ "%.2f"|format((metrics_full.ensemble_validation.improvement_ratio or 0) * 100) }}%</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">集成回退</div>
+                <div class="info-value">
+                    {% if metrics_full.ensemble_validation.recommend_ensemble %}未触发{% else %}已回退单模型{% endif %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
 
     <div class="card">
         <h2>模型排行榜 Top 10</h2>
@@ -261,6 +388,30 @@
             </tbody>
         </table>
     </div>
+
+    {% if perm_importance %}
+    <div class="card">
+        <h2>Permutation Importance Top 20（泄露检测 / 无偏重要性）</h2>
+        <table>
+            <thead>
+                <tr>
+                    {% for col in perm_importance_columns %}
+                    <th>{{ col }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in perm_importance %}
+                <tr>
+                    {% for col in perm_importance_columns %}
+                    <td>{{ "%.6f"|format(row[col]) if col.startswith("importance") else row[col] }}</td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
 
     {% if plots %}
     <div class="card">

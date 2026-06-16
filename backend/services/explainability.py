@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 import joblib
 import numpy as np
@@ -82,6 +82,157 @@ def compute_shap_values(
     except Exception as e:
         logger.warning(f"SHAP 计算失败: {e}")
         return {}
+
+
+def compute_permutation_importance(
+    predictor: TabularPredictor,
+    data: pd.DataFrame,
+    target_column: str,
+    output_dir: Path,
+    n_repeats: int = 5,
+    random_state: int = 42,
+) -> Dict[str, Any]:
+    """计算 Permutation Importance，用于检测泄露和无偏重要性评估。
+
+    在数据集上计算基准分数，然后逐列打乱特征后重新评估，记录分数下降量。
+    AutoGluon 内部指标统一为越大越好，因此分数下降越多代表特征越重要。
+    """
+    try:
+        feature_cols = [c for c in data.columns if c != target_column]
+        if not feature_cols:
+            return {}
+
+        def _score(df: pd.DataFrame) -> float:
+            perf = predictor.evaluate(df)
+            metric_name = predictor.eval_metric.name
+            if metric_name in perf:
+                return float(perf[metric_name])
+            return float(next(iter(perf.values())))
+
+        baseline_score = _score(data)
+        rng = np.random.default_rng(random_state)
+
+        records = []
+        for col in feature_cols:
+            drops = []
+            for _ in range(n_repeats):
+                permuted = data.copy()
+                permuted[col] = rng.permutation(permuted[col].values)
+                permuted_score = _score(permuted)
+                drops.append(baseline_score - permuted_score)
+            records.append(
+                {
+                    "feature": col,
+                    "importance_mean": float(np.mean(drops)),
+                    "importance_std": float(np.std(drops)),
+                }
+            )
+
+        importance_df = pd.DataFrame(records).sort_values("importance_mean", ascending=False)
+        output_path = Path(output_dir) / "permutation_importance.csv"
+        importance_df.to_csv(output_path, index=False)
+
+        return {
+            "path": str(output_path),
+            "top_features": importance_df.head(10).set_index("feature").to_dict()["importance_mean"],
+        }
+    except Exception as e:
+        logger.warning(f"Permutation Importance 计算失败: {e}")
+        return {}
+
+
+def explain_single_sample(
+    predictor: TabularPredictor,
+    X: pd.DataFrame,
+    background: Optional[pd.DataFrame] = None,
+) -> Dict[str, Any]:
+    """对单条样本进行 TreeSHAP / SHAP 解释。
+
+    返回该样本的预测结果、每个特征的 SHAP 贡献值（按绝对值排序）。
+    """
+    import importlib.util
+
+    if importlib.util.find_spec("shap") is None:
+        raise RuntimeError("shap 未安装，无法生成解释")
+
+    import shap
+
+    if len(X) != 1:
+        raise ValueError("explain_single_sample 只支持单条样本")
+
+    feature_names = X.columns.tolist()
+    problem_type = predictor.problem_type
+
+    # 优先使用 AutoGluon 原生 TreeSHAP（仅部分树模型支持）
+    if hasattr(predictor, "predict_proba_shapley"):
+        try:
+            shap_values = predictor.predict_proba_shapley(X)
+            shap_values = _normalize_shap_matrix(shap_values, X)
+            base_value = float(np.mean(shap_values))
+            contributions = shap_values[0]
+            pred = predictor.predict(X).iloc[0]
+            return _format_shap_explanation(feature_names, base_value, contributions, pred, problem_type)
+        except Exception:
+            pass
+
+    if background is None:
+        # 没有背景数据时，用训练集统计均值构造一个背景样本
+        background = pd.DataFrame([X.median().values], columns=feature_names)
+
+    if problem_type in ["binary", "multiclass"]:
+        classes = predictor.class_labels
+
+        def predict_proba_fn(X_arr):
+            X_df = pd.DataFrame(X_arr, columns=feature_names) if isinstance(X_arr, np.ndarray) else X_arr
+            return predictor.predict_proba(X_df).reindex(columns=classes).values
+
+        explainer = shap.Explainer(predict_proba_fn, background)
+        shap_values_obj = explainer(X)
+        shap_array = np.asarray(shap_values_obj.values)
+
+        if problem_type == "binary":
+            # 正类索引为 1
+            contributions = shap_array[0, :, 1] if shap_array.ndim == 3 else shap_array[0]
+            base_value = float(explainer.expected_value[1] if hasattr(explainer.expected_value, "__getitem__") else explainer.expected_value)
+            pred = predictor.predict(X).iloc[0]
+        else:
+            pred = predictor.predict(X).iloc[0]
+            class_idx = list(classes).index(pred)
+            contributions = shap_array[0, :, class_idx] if shap_array.ndim == 3 else shap_array[0]
+            base_value = float(
+                explainer.expected_value[class_idx]
+                if hasattr(explainer.expected_value, "__getitem__")
+                else explainer.expected_value
+            )
+    else:
+        def predict_fn(X_arr):
+            X_df = pd.DataFrame(X_arr, columns=feature_names) if isinstance(X_arr, np.ndarray) else X_arr
+            return predictor.predict(X_df).values
+
+        explainer = shap.Explainer(predict_fn, background)
+        shap_values_obj = explainer(X)
+        contributions = np.asarray(shap_values_obj.values)[0]
+        base_value = float(explainer.expected_value)
+        pred = predictor.predict(X).iloc[0]
+
+    values = X.iloc[0].values
+    features = [
+        {
+            "feature": name,
+            "value": float(value),
+            "contribution": float(contrib),
+            "abs_contribution": float(abs(contrib)),
+        }
+        for name, value, contrib in zip(feature_names, values, np.asarray(contributions).reshape(-1))
+    ]
+    features.sort(key=lambda x: x["abs_contribution"], reverse=True)
+
+    return {
+        "base_value": round(base_value, 6),
+        "prediction": pred,
+        "problem_type": problem_type,
+        "features": features,
+    }
 
 
 def _normalize_shap_matrix(shap_values: Any, X_sample: pd.DataFrame) -> np.ndarray:

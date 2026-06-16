@@ -84,7 +84,7 @@
           </el-select>
         </el-form-item>
         <el-form-item label="时间预算(分钟)">
-          <el-slider v-model="trainForm.time_budget_minutes" :min="1" :max="60" show-input />
+          <el-slider v-model="trainForm.time_budget_minutes" :min="1" :max="1440" show-input />
         </el-form-item>
         <el-form-item label="Preset">
           <el-select v-model="trainForm.preset" style="width: 100%">
@@ -118,12 +118,34 @@
     <!-- 质量报告对话框 -->
     <el-dialog v-model="showQualityDialog" title="数据质量报告" width="900px">
       <div v-if="qualityData" v-loading="qualityLoading">
-        <el-descriptions :column="3" border>
-          <el-descriptions-item label="行数">{{ qualityData.n_rows }}</el-descriptions-item>
-          <el-descriptions-item label="列数">{{ qualityData.n_columns }}</el-descriptions-item>
-          <el-descriptions-item label="特征数">{{ qualityData.n_features }}</el-descriptions-item>
-          <el-descriptions-item label="含缺失值行数">{{ qualityData.rows_with_missing }}</el-descriptions-item>
-        </el-descriptions>
+        <el-row :gutter="20" class="quality-summary">
+          <el-col :span="6">
+            <div class="quality-stat">综合得分</div>
+            <div class="quality-stat-value">{{ (qualityData.overall_score * 100).toFixed(2) }}%</div>
+          </el-col>
+          <el-col :span="6">
+            <div class="quality-stat">样本数</div>
+            <div class="quality-stat-value">{{ qualityData.n_rows }}</div>
+          </el-col>
+          <el-col :span="6">
+            <div class="quality-stat">特征数</div>
+            <div class="quality-stat-value">{{ qualityData.n_features }}</div>
+          </el-col>
+          <el-col :span="6">
+            <div class="quality-stat">含缺失值行数</div>
+            <div class="quality-stat-value">{{ qualityData.completeness?.rows_with_missing || 0 }}</div>
+          </el-col>
+        </el-row>
+
+        <h3 class="quality-title">质量维度得分</h3>
+        <el-row :gutter="20">
+          <el-col :span="4" v-for="dim in dimensionList" :key="dim.key">
+            <el-card shadow="hover" class="dim-card">
+              <div class="quality-stat-value">{{ (dim.score * 100).toFixed(2) }}%</div>
+              <div class="quality-stat">{{ dim.label }}</div>
+            </el-card>
+          </el-col>
+        </el-row>
 
         <el-alert
           v-for="(warning, idx) in qualityData.warnings"
@@ -149,7 +171,7 @@
             <el-card shadow="hover">
               <div class="quality-stat">常量/零方差列</div>
               <div class="quality-stat-value">
-                {{ (qualityData.constant_columns || []).length }}
+                {{ (qualityData.consistency?.constant_columns || []).length }}
               </div>
             </el-card>
           </el-col>
@@ -157,15 +179,15 @@
             <el-card shadow="hover">
               <div class="quality-stat">疑似 ID 列</div>
               <div class="quality-stat-value">
-                {{ (qualityData.id_like_columns || []).length }}
+                {{ (qualityData.uniqueness?.id_like_columns || []).length }}
               </div>
             </el-card>
           </el-col>
           <el-col :span="8">
             <el-card shadow="hover">
-              <div class="quality-stat">高基数类别列</div>
+              <div class="quality-stat">重复行</div>
               <div class="quality-stat-value">
-                {{ (qualityData.high_cardinality_columns || []).length }}
+                {{ qualityData.uniqueness?.duplicated_rows || 0 }}
               </div>
             </el-card>
           </el-col>
@@ -301,8 +323,9 @@ const showQuality = async (row) => {
 }
 
 const missingRateOption = computed(() => {
-  if (!qualityData.value?.missing_rates) return {}
-  const entries = Object.entries(qualityData.value.missing_rates)
+  const missingRates = qualityData.value?.completeness?.missing_rates
+  if (!missingRates) return {}
+  const entries = Object.entries(missingRates)
     .filter(([_, rate]) => rate > 0)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 20)
@@ -337,8 +360,9 @@ const targetDistributionOption = computed(() => {
 })
 
 const outlierOption = computed(() => {
-  if (!qualityData.value?.outlier_summary) return {}
-  const entries = Object.entries(qualityData.value.outlier_summary)
+  const outlierSummary = qualityData.value?.accuracy?.outlier_summary
+  if (!outlierSummary) return {}
+  const entries = Object.entries(outlierSummary)
     .map(([col, info]) => ({ col, count: info.outlier_count }))
     .sort((a, b) => b.count - a.count)
   return {
@@ -348,6 +372,22 @@ const outlierOption = computed(() => {
     yAxis: { type: 'value' },
     series: [{ data: entries.map((e) => e.count), type: 'bar', itemStyle: { color: '#f56c6c' } }],
   }
+})
+
+const dimensionList = computed(() => {
+  if (!qualityData.value) return []
+  const dims = [
+    { key: 'completeness', label: '完整性' },
+    { key: 'consistency', label: '一致性' },
+    { key: 'accuracy', label: '准确性' },
+    { key: 'timeliness', label: '时效性' },
+    { key: 'uniqueness', label: '唯一性' },
+    { key: 'validity', label: '有效性' },
+  ]
+  return dims.map((d) => ({
+    ...d,
+    score: qualityData.value[d.key]?.score ?? 0,
+  }))
 })
 
 const startTraining = (row) => {
@@ -464,5 +504,17 @@ onMounted(fetchDatasets)
   color: #409eff;
   text-align: center;
   margin-top: 8px;
+}
+
+.dim-card {
+  margin-bottom: 10px;
+}
+
+.dim-card .quality-stat-value {
+  font-size: 20px;
+}
+
+.quality-summary {
+  margin-bottom: 10px;
 }
 </style>

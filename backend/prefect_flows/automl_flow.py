@@ -11,11 +11,14 @@ from typing import Dict, Any, Optional
 
 import pandas as pd
 from prefect import flow, task
+from prefect.artifacts import create_table_artifact, create_markdown_artifact
+from prefect.cache_policies import INPUTS, TASK_SOURCE
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from config import settings
 from services.data_service import load_dataframe, analyze_metadata
+from services.data_quality import assess_data_quality
 from services.automl import AutoMLService
 from services.preprocessing import clean_dataframe, engineer_features, split_data
 from services.preprocessing_pipeline import DataPreprocessor, save_feature_columns
@@ -26,9 +29,24 @@ from services.visualization import generate_report_plots
 logger = logging.getLogger(__name__)
 
 
-@task(retries=2, retry_delay_seconds=5)
+def _file_cache_key(context, parameters):
+    """基于文件路径与修改时间生成缓存键（使用 hash，避免超出 Prefect 存储 base path）。"""
+    import hashlib
+
+    path = Path(parameters["file_path"])
+    mtime = path.stat().st_mtime if path.exists() else 0
+    key = hashlib.sha256(f"{path.resolve()}:{mtime}".encode()).hexdigest()
+    return key
+
+
+@task(
+    retries=2,
+    retry_delay_seconds=5,
+    cache_policy=INPUTS + TASK_SOURCE,
+    cache_key_fn=_file_cache_key,
+)
 def load_data_task(file_path: str) -> pd.DataFrame:
-    """加载数据任务。"""
+    """加载数据任务（按文件路径+修改时间缓存）。"""
     df = load_dataframe(Path(file_path))
     logger.info(f"数据加载完成: {df.shape}")
     return df
@@ -83,7 +101,7 @@ def split_data_task(
     return {"train": train_df, "test": test_df}
 
 
-@task
+@task(cache_policy=INPUTS + TASK_SOURCE)
 def build_strategy_task(
     metadata: Dict[str, Any],
     task_type: str,
@@ -145,7 +163,7 @@ def apply_sampling_task(
     }
 
 
-@task
+@task(timeout_seconds=10800)
 def train_model_task(
     train_data: pd.DataFrame,
     target_column: str,
@@ -177,7 +195,7 @@ def train_model_task(
     return result
 
 
-@task
+@task(timeout_seconds=3600)
 def evaluate_model_task(
     test_data: pd.DataFrame,
     train_data: pd.DataFrame,
@@ -202,6 +220,18 @@ def evaluate_model_task(
     if extended:
         metrics["extended"] = extended
 
+    # 二分类阈值调优
+    if predictor.problem_type == "binary":
+        threshold_info = _compute_optimal_threshold(y_true, X_test, predictor)
+        metrics["threshold"] = threshold_info
+
+    # 集成验证：检查 WeightedEnsemble 是否带来明显提升
+    try:
+        leaderboard = predictor.leaderboard(silent=True)
+        metrics["ensemble_validation"] = _validate_ensemble(leaderboard, None)
+    except Exception as e:
+        logger.warning(f"集成验证失败: {e}")
+
     # 训练集参考指标
     try:
         train_performance = predictor.evaluate(train_data)
@@ -217,6 +247,63 @@ def evaluate_model_task(
 
     logger.info(f"模型评估完成: test={metrics['final']}, train={metrics.get('train', {})}")
     return metrics
+
+
+def _validate_ensemble(leaderboard: pd.DataFrame, primary_metric: Optional[str]) -> Dict[str, Any]:
+    """检查集成是否优于单模型；若差距 <2% 则建议使用单模型。"""
+    if leaderboard.empty or "model" not in leaderboard.columns:
+        return {"ensemble_used": False, "reason": "leaderboard 为空"}
+
+    score_col = "score_val"
+    if score_col not in leaderboard.columns:
+        score_col = leaderboard.columns[-1]
+
+    sorted_lb = leaderboard.sort_values(score_col, ascending=False)
+    top_model = sorted_lb.iloc[0]
+    ensemble_used = str(top_model["model"]).startswith("WeightedEnsemble")
+
+    # 找到最佳非集成模型
+    non_ensemble = sorted_lb[~sorted_lb["model"].astype(str).str.startswith("WeightedEnsemble")]
+    if non_ensemble.empty:
+        return {"ensemble_used": ensemble_used, "reason": "无单模型可比较"}
+
+    best_single_score = float(non_ensemble.iloc[0][score_col])
+    top_score = float(top_model[score_col])
+    improvement = (top_score - best_single_score) / max(abs(best_single_score), 1e-10)
+
+    return {
+        "ensemble_used": ensemble_used,
+        "top_model": str(top_model["model"]),
+        "best_single_model": str(non_ensemble.iloc[0]["model"]),
+        "improvement_ratio": round(improvement, 6),
+        "recommend_ensemble": ensemble_used and improvement > 0.02,
+    }
+
+
+def _compute_optimal_threshold(y_true, X_test, predictor) -> Dict[str, Any]:
+    """在二分类测试集上搜索最优阈值（F1 最大）。"""
+    from sklearn import metrics as sk_metrics
+    import numpy as np
+
+    pos_label = predictor.class_labels[1]
+    y_proba = predictor.predict_proba(X_test)[pos_label].values
+    y_true_binary = (y_true == pos_label).astype(int)
+
+    thresholds = np.linspace(0.01, 0.99, 99)
+    best_f1 = 0.0
+    best_threshold = 0.5
+    for t in thresholds:
+        y_pred_t = (y_proba >= t).astype(int)
+        f1 = sk_metrics.f1_score(y_true_binary, y_pred_t, zero_division=0)
+        if f1 > best_f1:
+            best_f1 = f1
+            best_threshold = float(t)
+
+    return {
+        "default_threshold": 0.5,
+        "optimal_threshold": best_threshold,
+        "best_f1": round(best_f1, 6),
+    }
 
 
 def _compute_extended_metrics(
@@ -312,6 +399,87 @@ def _compute_extended_metrics(
 
 
 @task
+def assess_data_quality_task(
+    df: pd.DataFrame,
+    target_column: str,
+    output_dir: str,
+) -> Dict[str, Any]:
+    """评估数据质量并保存六维报告。"""
+    quality = assess_data_quality(df, target_column)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    quality_path = output_path / "quality_report.json"
+    with open(quality_path, "w", encoding="utf-8") as f:
+        json.dump(quality, f, ensure_ascii=False, indent=2, default=str)
+    logger.info(f"数据质量报告保存: {quality_path}, overall_score={quality.get('overall_score')}")
+    return quality
+
+
+@task
+def create_artifacts_task(
+    output_dir: str,
+    metadata: Dict[str, Any],
+    strategy: Dict[str, Any],
+    sampling_strategy: Dict[str, Any],
+    quality: Optional[Dict[str, Any]] = None,
+) -> None:
+    """创建 Prefect Artifact，方便在 Prefect UI 中查看关键结果。"""
+    output_path = Path(output_dir)
+
+    # Leaderboard Artifact
+    leaderboard_path = output_path / "leaderboard.csv"
+    if leaderboard_path.exists():
+        import pandas as pd
+
+        leaderboard_df = pd.read_csv(leaderboard_path).head(10)
+        create_table_artifact(
+            key="leaderboard",
+            table=leaderboard_df.to_dict(orient="records"),
+            description="模型排行榜",
+        )
+
+    # 特征重要性 Artifact
+    importance_path = output_path / "feature_importance.csv"
+    if importance_path.exists():
+        import pandas as pd
+
+        importance_df = pd.read_csv(importance_path).head(20)
+        create_table_artifact(
+            key="feature-importance",
+            table=importance_df.to_dict(orient="records"),
+            description="Top 20 特征重要性",
+        )
+
+    # 策略 Markdown Artifact
+    rationale = "\n".join(f"- {item}" for item in strategy.get("rationale", []))
+    preprocessing = strategy.get("preprocessing", {})
+    markdown = (
+        f"# 训练策略\n\n"
+        f"**数据规模**: {strategy.get('data_size_label')}\n\n"
+        f"**Preset**: {strategy.get('preset')}\n\n"
+        f"**主指标**: {strategy.get('primary_metric')}\n\n"
+        f"**时间限制**: {strategy.get('time_limit_seconds')}s\n\n"
+        f"**采样策略**: {sampling_strategy.get('method')}\n\n"
+        f"**决策依据**:\n{rationale}\n\n"
+        f"**预处理开关**:\n```json\n{json.dumps(preprocessing, ensure_ascii=False, indent=2)}\n```"
+    )
+    create_markdown_artifact(key="training-strategy", markdown=markdown)
+
+    # 数据质量摘要 Artifact
+    if quality:
+        quality_summary = {
+            "overall_score": quality.get("overall_score"),
+            "n_rows": quality.get("n_rows"),
+            "n_columns": quality.get("n_columns"),
+            "warnings": quality.get("warnings", []),
+        }
+        create_markdown_artifact(
+            key="data-quality-summary",
+            markdown=f"```json\n{json.dumps(quality_summary, ensure_ascii=False, indent=2)}\n```",
+        )
+
+
+@task
 def generate_report_task(
     run_id: str,
     output_dir: str,
@@ -320,9 +488,19 @@ def generate_report_task(
     primary_metric: Optional[str],
     task_type: str,
     seed: Optional[int] = None,
+    quality: Optional[Dict[str, Any]] = None,
 ) -> str:
     """生成 HTML 报告任务。"""
     output_path = Path(output_dir)
+
+    # 读取数据质量报告（若未传入则尝试本地文件）
+    if quality is None:
+        quality_path = output_path / "quality_report.json"
+        if quality_path.exists():
+            with open(quality_path, "r", encoding="utf-8") as f:
+                quality = json.load(f)
+    if quality is None:
+        quality = {}
 
     # 读取指标
     metrics_path = output_path / "metrics.json"
@@ -362,6 +540,17 @@ def generate_report_task(
     # 生成可视化图表
     plots = generate_report_plots(output_path, task_type)
 
+    # 读取 Permutation Importance
+    perm_importance_path = output_path / "permutation_importance.csv"
+    perm_importance = []
+    perm_importance_columns = []
+    if perm_importance_path.exists():
+        import pandas as pd
+
+        perm_df = pd.read_csv(perm_importance_path).head(20)
+        perm_importance = perm_df.to_dict(orient="records")
+        perm_importance_columns = perm_df.columns.tolist()
+
     template = env.get_template("report.html")
     html_content = template.render(
         run_id=run_id,
@@ -376,7 +565,11 @@ def generate_report_task(
         leaderboard_columns=leaderboard_columns,
         feature_importance=feature_importance,
         importance_columns=importance_columns,
+        perm_importance=perm_importance,
+        perm_importance_columns=perm_importance_columns,
         plots=plots,
+        quality=quality,
+        metrics_full=metrics,
     )
 
     report_path = output_path / "report.html"
@@ -398,6 +591,7 @@ def automl_pipeline(
     primary_metric: Optional[str] = None,
     seed: Optional[int] = None,
     max_models: int = 50,
+    cleaning_rules: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     端到端 AutoML Pipeline。
@@ -422,6 +616,9 @@ def automl_pipeline(
     # 3. 元数据分析（基于原始数据）
     metadata = analyze_metadata_task(df, target_column)
 
+    # 3.5 数据质量六维评估
+    quality = assess_data_quality_task(df, target_column, output_dir)
+
     # 4. 策略路由（数据驱动）
     strategy = build_strategy_task(
         metadata=metadata,
@@ -432,17 +629,26 @@ def automl_pipeline(
         max_models=max_models,
     )
 
-    # 5. 拟合并应用预处理 Pipeline（按策略执行）
-    preprocessor = DataPreprocessor(target_column=target_column, strategy=strategy)
-    df = preprocessor.fit_transform(df)
+    # 5. 划分训练集/测试集（必须在预处理前，防止数据泄露）
+    split_result = split_data_task(df, target_column, task_type=task_type)
+    train_df_raw = split_result["train"]
+    test_df_raw = split_result["test"]
+
+    # 6. 拟合并应用预处理 Pipeline（仅在训练集上 fit，再 transform 全量数据）
+    preprocessor = DataPreprocessor(
+        target_column=target_column,
+        strategy=strategy,
+        cleaning_rules=cleaning_rules,
+    )
+    preprocessor.fit(train_df_raw)
+    train_df = preprocessor.transform(train_df_raw)
+    test_df = preprocessor.transform(test_df_raw)
     preprocessor.save(Path(output_dir) / "preprocessing_pipeline.joblib")
     save_feature_columns(output_dir, preprocessor.feature_columns)
-    logger.info(f"预处理完成: {df.shape}, 特征列={preprocessor.feature_columns}")
-
-    # 6. 划分训练集/测试集
-    split_result = split_data_task(df, target_column, task_type=task_type)
-    train_df = split_result["train"]
-    test_df = split_result["test"]
+    logger.info(
+        f"预处理完成: 训练集 {train_df.shape}, 测试集 {test_df.shape}, "
+        f"特征列={preprocessor.feature_columns}"
+    )
 
     # 7. 条件采样（仅在训练集上）
     sampling_strategy = build_sampling_strategy_task(train_df, target_column, task_type)
@@ -468,7 +674,16 @@ def automl_pipeline(
     # 9. 评估（测试集为主，训练集为参考）
     metrics = evaluate_model_task(test_df, train_df, target_column, output_dir)
 
-    # 9. 生成 HTML 报告
+    # 9. 创建 Prefect Artifact
+    create_artifacts_task(
+        output_dir=output_dir,
+        metadata=metadata,
+        strategy=strategy,
+        sampling_strategy=sampling_strategy,
+        quality=quality,
+    )
+
+    # 10. 生成 HTML 报告
     strategy["sampling"] = sampling_strategy
     report_path = generate_report_task(
         run_id=Path(output_dir).name,
@@ -478,6 +693,7 @@ def automl_pipeline(
         primary_metric=strategy.get("primary_metric"),
         task_type=task_type,
         seed=seed,
+        quality=quality,
     )
 
     return {

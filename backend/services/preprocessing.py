@@ -80,10 +80,28 @@ def split_data(
     """划分训练集和测试集。
 
     分类任务自动使用 stratify 保持类别分布一致。
+    - 目标列缺失的行会在划分前被移除。
+    - 样本数过少的类别（<2）会被过滤，避免 sklearn stratify 报错。
+    - 若总样本数不足以按类别分层（测试集容量小于类别数），则回退到普通随机划分。
     """
+    df = df.dropna(subset=[target_column]).reset_index(drop=True)
+
     stratify = None
     if task_type in ("binary_classification", "multiclass_classification"):
-        stratify = df[target_column]
+        class_counts = df[target_column].value_counts()
+        valid_classes = class_counts[class_counts >= 2].index.tolist()
+        if len(valid_classes) < 2:
+            raise ValueError(
+                f"目标列 '{target_column}' 有效类别数不足 2，无法进行分类训练。"
+                f"原始类别分布：\n{class_counts.to_dict()}"
+            )
+        dropped_classes = set(class_counts.index) - set(valid_classes)
+        if dropped_classes:
+            # 仅保留有效类别
+            df = df[df[target_column].isin(valid_classes)].reset_index(drop=True)
+        # 只有当测试集能容纳至少每个类别 1 个样本时才启用 stratify
+        if int(len(df) * test_size) >= len(valid_classes):
+            stratify = df[target_column]
 
     train_df, test_df = train_test_split(
         df, test_size=test_size, random_state=random_state, stratify=stratify

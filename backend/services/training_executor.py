@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict
 
 from sqlalchemy import select
 
@@ -36,6 +36,7 @@ class TrainingJob:
     primary_metric: str | None
     seed: int | None
     max_models: int
+    cleaning_rules: Dict[str, Any] | None = None
     process: asyncio.subprocess.Process | None = None
     status: str = "pending"
     error_message: str | None = None
@@ -76,6 +77,7 @@ class TrainingExecutor:
             primary_metric=kwargs.get("primary_metric"),
             seed=kwargs.get("seed"),
             max_models=kwargs.get("max_models", 50),
+            cleaning_rules=kwargs.get("cleaning_rules"),
         )
         self._jobs[run_id] = job
 
@@ -107,6 +109,17 @@ class TrainingExecutor:
             if set_completed:
                 run.completed_at = datetime.now(UTC)
             await db.commit()
+
+    def _read_error_message(self, output_dir: Path) -> str | None:
+        """读取子进程写入的 error.json，获取真实失败原因。"""
+        error_path = output_dir / "error.json"
+        if not error_path.exists():
+            return None
+        try:
+            data = json.loads(error_path.read_text(encoding="utf-8"))
+            return data.get("error_message") or data.get("message")
+        except (json.JSONDecodeError, OSError):
+            return None
 
     async def _save_metrics(self, run_id: str, output_dir: Path) -> None:
         """将 metrics.json 中的指标保存到数据库。"""
@@ -168,6 +181,8 @@ class TrainingExecutor:
         if job.seed is not None:
             cmd.extend(["--seed", str(job.seed)])
         cmd.extend(["--max-models", str(job.max_models)])
+        if job.cleaning_rules:
+            cmd.extend(["--cleaning-rules", json.dumps(job.cleaning_rules, ensure_ascii=False)])
 
         env = os.environ.copy()
         env["PREFECT_API_URL"] = ""
@@ -189,11 +204,15 @@ class TrainingExecutor:
             returncode = await asyncio.wait_for(job.process.wait(), timeout=timeout)
 
             if returncode != 0:
+                error_message = (
+                    self._read_error_message(job.output_dir)
+                    or f"Flow 执行失败 (exit {returncode})，详见 training.log"
+                )
                 log_file.write(
-                    f"\n[{datetime.now(UTC).isoformat()}] 训练失败 (exit {returncode})\n"
+                    f"\n[{datetime.now(UTC).isoformat()}] 训练失败 (exit {returncode}): {error_message}\n"
                 )
                 log_file.flush()
-                raise RuntimeError(f"Flow 执行失败 (exit {returncode})，详见 training.log")
+                raise RuntimeError(error_message)
 
             log_file.write(f"\n[{datetime.now(UTC).isoformat()}] 训练完成\n")
             log_file.flush()

@@ -199,6 +199,23 @@ def test_validate_dataset_schema(default_dataset):
     assert data["errors"] == []
 
 
+def test_parse_intent_endpoint(default_dataset):
+    """测试自然语言意图解析接口（无 LLM key 时降级到规则引擎）。"""
+    response = client.post(
+        "/api/intent/parse",
+        json={
+            "query": "用 iris 数据集预测 target，多分类",
+            "dataset_id": default_dataset.id,
+            "provider": "auto",
+        },
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["target_column"] == "target"
+    assert data["task_type"] == "multiclass_classification"
+    assert data["provider"] == "rule_engine"
+
+
 @pytest.mark.slow
 def test_end_to_end_training(default_dataset):
     """端到端训练测试（耗时较长，默认跳过）。"""

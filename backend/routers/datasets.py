@@ -1,5 +1,6 @@
 """数据集 API 路由。"""
 
+import asyncio
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy import select
@@ -13,10 +14,17 @@ from schemas import (
     DatasetUpdate,
     DatasetSchemaResponse,
     SchemaValidationResponse,
+    CleaningRules,
+    DatasetQualityResponse,
+    DatasetConnectRequest,
 )
 from services.storage import storage_service
 from services.data_quality import assess_data_quality
 from services.data_service import load_dataframe, analyze_metadata, preview_dataframe
+from services.db_connection_service import (
+    load_from_sql,
+    build_connection_display_name,
+)
 from services.schema_service import (
     build_schema_from_file,
     validate_against_schema,
@@ -183,9 +191,9 @@ async def validate_dataset_schema(dataset_id: str, db: AsyncSession = Depends(ge
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{dataset_id}/quality")
+@router.get("/{dataset_id}/quality", response_model=DatasetQualityResponse)
 async def get_dataset_quality(dataset_id: str, db: AsyncSession = Depends(get_db)):
-    """获取数据集质量报告。"""
+    """获取数据集质量报告（六维模型）。"""
     result = await db.execute(select(Dataset).where(Dataset.id == dataset_id))
     dataset = result.scalar_one_or_none()
     if not dataset:
@@ -196,6 +204,83 @@ async def get_dataset_quality(dataset_id: str, db: AsyncSession = Depends(get_db
         target_column = dataset.target_column or ""
         return assess_data_quality(df, target_column)
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{dataset_id}/cleaning-rules", response_model=CleaningRules)
+async def get_cleaning_rules(dataset_id: str, db: AsyncSession = Depends(get_db)):
+    """获取数据集清洗规则。"""
+    result = await db.execute(select(Dataset).where(Dataset.id == dataset_id))
+    dataset = result.scalar_one_or_none()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="数据集不存在")
+
+    rules = (dataset.schema_info or {}).get("cleaning_rules", {})
+    return CleaningRules(**rules)
+
+
+@router.put("/{dataset_id}/cleaning-rules", response_model=CleaningRules)
+async def update_cleaning_rules(
+    dataset_id: str,
+    request: CleaningRules,
+    db: AsyncSession = Depends(get_db),
+):
+    """更新数据集清洗规则。"""
+    result = await db.execute(select(Dataset).where(Dataset.id == dataset_id))
+    dataset = result.scalar_one_or_none()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="数据集不存在")
+
+    schema_info = dataset.schema_info or {}
+    schema_info["cleaning_rules"] = request.model_dump()
+    dataset.schema_info = schema_info
+
+    await db.commit()
+    await db.refresh(dataset)
+    return request
+
+
+@router.post("/connect", response_model=DatasetResponse)
+async def connect_database(
+    request: DatasetConnectRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """通过数据库连接导入数据集。"""
+    try:
+        df = await asyncio.to_thread(
+            load_from_sql,
+            request.connection_type,
+            request.connection_params,
+            request.query,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"数据库查询失败: {str(e)}")
+
+    if df.empty:
+        raise HTTPException(status_code=400, detail="查询结果为空")
+
+    try:
+        dataset = Dataset(name=request.name or build_connection_display_name(request.connection_type, request.connection_params))
+        db.add(dataset)
+        await db.flush()
+
+        file_path = storage_service.upload_dir / f"{dataset.id}.csv"
+        df.to_csv(file_path, index=False)
+
+        metadata = analyze_metadata(df)
+        quality = assess_data_quality(df, target_column="")
+
+        dataset.file_path = str(file_path)
+        dataset.file_size_bytes = file_path.stat().st_size
+        dataset.row_count = len(df)
+        dataset.column_count = len(df.columns)
+        dataset.schema_info = {**metadata, "quality": quality}
+
+        await db.commit()
+        await db.refresh(dataset)
+        return dataset
+    except Exception as e:
+        await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 

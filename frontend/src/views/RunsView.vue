@@ -20,9 +20,16 @@
           </template>
         </el-table-column>
         <el-table-column prop="dataset_id" label="数据集ID" width="220" />
-        <el-table-column prop="status" label="状态">
+        <el-table-column prop="status" label="状态" width="110">
           <template #default="{ row }">
             <el-tag :type="statusType(row.status)">{{ row.status }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="失败原因" min-width="220" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.error_message" class="error-text">{{ row.error_message }}</span>
+            <span v-else-if="row.status === 'failed'" class="error-text">-</span>
+            <span v-else>-</span>
           </template>
         </el-table-column>
         <el-table-column prop="time_budget_minutes" label="时间预算(分钟)" />
@@ -76,7 +83,7 @@
           </el-select>
         </el-form-item>
         <el-form-item label="时间预算(分钟)">
-          <el-slider v-model="createForm.time_budget_minutes" :min="1" :max="60" show-input />
+          <el-slider v-model="createForm.time_budget_minutes" :min="1" :max="1440" show-input />
         </el-form-item>
         <el-form-item label="Preset">
           <el-select v-model="createForm.preset" style="width: 100%">
@@ -239,5 +246,9 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.error-text {
+  color: #f56c6c;
 }
 </style>

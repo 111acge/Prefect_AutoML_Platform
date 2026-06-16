@@ -1,7 +1,11 @@
 import axios from 'axios'
 
+// 默认走前端服务器（vite dev proxy / nginx / 同端口网关）的 /api 路径
+// 如需独立域名部署，可通过 VITE_API_BASE_URL 覆盖
+const baseURL = import.meta.env.VITE_API_BASE_URL || '/api'
+
 const api = axios.create({
-  baseURL: '/api',
+  baseURL,
   timeout: 30000,
 })
 

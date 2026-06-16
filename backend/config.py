@@ -1,6 +1,7 @@
 """应用配置管理。"""
 
 from pathlib import Path
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,6 +27,14 @@ class Settings(BaseSettings):
 
     # Prefect
     prefect_home: Path = project_root / ".prefect"
+
+    # LLM 意图解析（可选，失败自动降级）
+    llm_provider: str = "auto"  # auto / kimi / deepseek / minimax / openai
+    kimi_api_key: Optional[str] = None
+    deepseek_api_key: Optional[str] = None
+    minimax_api_key: Optional[str] = None
+    openai_api_key: Optional[str] = None
+    default_llm_model: Optional[str] = None
 
     model_config = SettingsConfigDict(
         env_file=str(project_root / ".env"),

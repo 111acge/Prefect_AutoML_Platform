@@ -171,17 +171,35 @@ def build_strategy(
         "categorical_impute": "mode",
         "log_transform": True,
         "log_skew_threshold": 1.0,
+        "outlier_strategy": "iqr",
+        "scaler_type": "auto",
+        "rare_category_threshold": max(5, int(n_samples * 0.001)),
+        "datetime_cyclical": has_datetime,
+        "text_embeddings": False,  # 默认关闭，避免依赖和内存问题；可手动开启
         "high_cardinality_threshold": 50,
         "drop_high_missing": high_missing,
         "datetime_features": has_datetime,
         "text_features": has_text,
+        # 缺失值分级策略
+        "missing_row_drop_threshold": 0.05,   # <5% 删行（仅在训练时生效）
+        "missing_impute_threshold": 0.30,     # 5-30% 填充
+        "missing_drop_threshold": 0.50,       # >50% 丢弃或缺失指示列
+        "missing_indicator": True,
+        # 类别编码按基数选择
+        "one_hot_threshold": 10,
+        "target_encoding_threshold": 50,
+        # 条件降维
+        "correlation_threshold": 0.95,
+        "low_variance_threshold": 0.0,
+        "pca_variance_ratio": 0.95,
+        "enable_pca": n_features > 100 or memory_mb > 1024,
     }
     if high_missing:
         rationale.append("存在高缺失率特征，训练后将给出缺失率报告")
     if has_datetime:
-        rationale.append("检测到时间特征，将提取年月日等特征")
+        rationale.append("检测到时间特征，将提取年月日、小时及周期特征")
     if has_text:
-        rationale.append("检测到文本特征，交给 AutoGluon 自动处理")
+        rationale.append("检测到文本特征，默认交给 AutoGluon 自动处理；可手动开启 Embedding")
 
     return TrainingStrategy(
         data_size_label=data_size_label,
@@ -209,7 +227,7 @@ def _auto_primary_metric(task_type: str, target_info: Dict[str, Any]) -> str:
             if len(counts) >= 2:
                 ratio = max(counts) / max(min(counts), 1)
                 if ratio > 3:
-                    return "roc_auc"
+                    return "auc_pr"
         return "f1"
     elif task_type == "multiclass_classification":
         return "log_loss"

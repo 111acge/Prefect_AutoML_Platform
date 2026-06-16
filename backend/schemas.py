@@ -80,7 +80,7 @@ class RunCreate(BaseModel):
         ..., pattern="^(binary_classification|multiclass_classification|regression)$"
     )
     primary_metric: Optional[str] = None
-    time_budget_minutes: float = Field(default=10, ge=0.1, le=180)
+    time_budget_minutes: float = Field(default=10, ge=0.1, le=1440)
     max_models: int = Field(default=50, ge=1, le=200)
     preset: Optional[str] = Field(default="auto")
     seed: Optional[int] = Field(default=None, ge=0)
@@ -109,6 +109,7 @@ class RunResult(BaseModel):
 
     run_id: str
     status: str
+    error_message: Optional[str] = None
     metrics: Dict[str, float]
     extended_metrics: Optional[Dict[str, Any]] = None
     train_metrics: Optional[Dict[str, float]] = None
@@ -129,3 +130,68 @@ class PredictionResponse(BaseModel):
 
     predictions: List[Any]
     probabilities: Optional[List[Dict[str, float]]] = None
+    threshold: Optional[float] = None
+
+
+class ExplainRequest(BaseModel):
+    """单样本解释请求。"""
+
+    data: List[Dict[str, Any]]
+
+
+class ExplainResponse(BaseModel):
+    """单样本解释响应。"""
+
+    base_value: float
+    prediction: Any
+    problem_type: str
+    features: List[Dict[str, Any]]
+
+
+class ValueConstraint(BaseModel):
+    """列取值约束。"""
+
+    column: str
+    min_value: Optional[float] = None
+    max_value: Optional[float] = None
+
+
+class CleaningRules(BaseModel):
+    """数据清洗规则配置。"""
+
+    remove_duplicates: bool = True
+    drop_rows_with_missing_target: bool = True
+    numeric_impute_strategy: str = "median"  # median / mean / constant
+    numeric_impute_constant: Optional[float] = 0.0
+    categorical_impute_strategy: str = "mode"  # mode / constant
+    categorical_impute_constant: Optional[str] = "missing"
+    drop_columns: List[str] = Field(default_factory=list)
+    value_constraints: List[ValueConstraint] = Field(default_factory=list)
+
+
+class DatasetQualityResponse(BaseModel):
+    """数据集质量报告响应。"""
+
+    n_rows: int
+    n_columns: int
+    n_features: int
+    overall_score: float
+    completeness: Dict[str, Any]
+    consistency: Dict[str, Any]
+    accuracy: Dict[str, Any]
+    timeliness: Dict[str, Any]
+    uniqueness: Dict[str, Any]
+    validity: Dict[str, Any]
+    target_info: Dict[str, Any]
+    warnings: List[str]
+
+
+class DatasetConnectRequest(BaseModel):
+    """数据库连接上传请求。"""
+
+    connection_type: str = Field(
+        ..., pattern="^(mysql|postgresql|clickhouse|sqlite)$"
+    )
+    connection_params: Dict[str, Any]
+    query: str
+    name: Optional[str] = None
