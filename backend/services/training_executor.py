@@ -7,6 +7,7 @@
 import asyncio
 import json
 import os
+import queue
 import sys
 import threading
 from asyncio import Semaphore
@@ -39,6 +40,7 @@ class TrainingJob:
     seed: int | None
     max_models: int
     cleaning_rules: Dict[str, Any] | None = None
+    feature_engineering_enabled: bool = True
     process: asyncio.subprocess.Process | None = None
     status: str = "pending"
     error_message: str | None = None
@@ -56,6 +58,8 @@ class TrainingExecutor:
         """
         self._semaphore = Semaphore(max_concurrent_jobs)
         self._jobs: dict[str, TrainingJob] = {}
+        # SSE 状态订阅：run_id -> set(queue.Queue)
+        self._status_subscribers: dict[str, set[queue.Queue]] = {}
 
         # 使用独立后台事件循环运行训练任务，避免被 FastAPI/TestClient 的请求生命周期取消
         self._loop = asyncio.new_event_loop()
@@ -82,6 +86,32 @@ class TrainingExecutor:
         """获取任务状态。"""
         return self._jobs.get(run_id)
 
+    def subscribe_status(self, run_id: str, q: queue.Queue) -> None:
+        """订阅指定 run 的状态变化（SSE 用）。"""
+        self._status_subscribers.setdefault(run_id, set()).add(q)
+
+    def unsubscribe_status(self, run_id: str, q: queue.Queue) -> None:
+        """取消订阅。"""
+        subs = self._status_subscribers.get(run_id)
+        if subs:
+            subs.discard(q)
+            if not subs:
+                self._status_subscribers.pop(run_id, None)
+
+    def _notify_status(self, run_id: str, status: str, error_message: str | None = None) -> None:
+        """通知所有订阅者状态变化。"""
+        subs = self._status_subscribers.get(run_id)
+        if not subs:
+            return
+        data = {"status": status}
+        if error_message is not None:
+            data["error_message"] = error_message
+        for q in list(subs):
+            try:
+                q.put_nowait(data)
+            except queue.Full:
+                pass
+
     def list_jobs(self) -> list[TrainingJob]:
         """列出所有追踪中的任务。"""
         return list(self._jobs.values())
@@ -101,6 +131,7 @@ class TrainingExecutor:
             seed=kwargs.get("seed"),
             max_models=kwargs.get("max_models", 50),
             cleaning_rules=kwargs.get("cleaning_rules"),
+            feature_engineering_enabled=kwargs.get("feature_engineering_enabled", True),
         )
         self._jobs[run_id] = job
 
@@ -123,6 +154,7 @@ class TrainingExecutor:
             seed=kwargs.get("seed"),
             max_models=kwargs.get("max_models", 50),
             cleaning_rules=kwargs.get("cleaning_rules"),
+            feature_engineering_enabled=kwargs.get("feature_engineering_enabled", True),
         )
         self._jobs[run_id] = job
 
@@ -155,6 +187,9 @@ class TrainingExecutor:
             if set_completed:
                 run.completed_at = datetime.now(UTC)
             await db.commit()
+
+        # 通知 SSE 订阅者
+        self._notify_status(run_id, status, error_message)
 
     def _read_error_message(self, output_dir: Path) -> str | None:
         """读取子进程写入的 error.json，获取真实失败原因。"""
@@ -236,6 +271,8 @@ class TrainingExecutor:
         if job.seed is not None:
             cmd.extend(["--seed", str(job.seed)])
         cmd.extend(["--max-models", str(job.max_models)])
+        if not job.feature_engineering_enabled:
+            cmd.append("--no-feature-engineering")
         if job.cleaning_rules:
             cmd.extend(["--cleaning-rules", json.dumps(job.cleaning_rules, ensure_ascii=False)])
 
@@ -244,6 +281,27 @@ class TrainingExecutor:
         # 强制子进程 stdout/stderr 使用 UTF-8，避免 Windows 重定向时写入 cp936 导致日志解码失败
         env["PYTHONIOENCODING"] = "utf-8"
 
+        async def _pump_logs(reader: asyncio.StreamReader, writer) -> None:
+            """实时过滤并写入子进程 stdout，丢弃 Prefect 内部噪音。"""
+            noisy_patterns = (
+                "EventsWorker failed",
+                "Service 'EventsWorker' failed",
+                "GlobalEventLoopThread | prefect._internal.concurrency",
+                "Service .* failed with",
+            )
+            while True:
+                try:
+                    line = await reader.readline()
+                except Exception:
+                    break
+                if not line:
+                    break
+                text = line.decode("utf-8", errors="replace")
+                if any(pattern in text for pattern in noisy_patterns):
+                    continue
+                writer.write(text)
+                writer.flush()
+
         try:
             log_file = log_path.open("w", encoding="utf-8")
             log_file.write(f"[{datetime.now(UTC).isoformat()}] 启动训练任务: {job.run_id}\n")
@@ -251,19 +309,20 @@ class TrainingExecutor:
 
             job.process = await asyncio.create_subprocess_exec(
                 *cmd,
-                stdout=log_file,
+                stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 env=env,
             )
 
-            # 等待子进程结束，设置超时为预算时间 + 1 分钟缓冲
-            # AutoGluon 内部已有 time_limit，这里只是防止子进程僵死的最后保险
+            # 同时泵送日志并等待子进程结束
             # 当 time_budget_minutes 为 None 时不设置超时（无穷大）
+            pump_task = asyncio.create_task(_pump_logs(job.process.stdout, log_file))
             if job.time_budget_minutes is None:
                 returncode = await job.process.wait()
             else:
                 timeout = job.time_budget_minutes * 60 + 60
                 returncode = await asyncio.wait_for(job.process.wait(), timeout=timeout)
+            await pump_task
 
             if returncode != 0:
                 error_message = (
@@ -318,6 +377,12 @@ class TrainingExecutor:
             job.error_message = str(e)
 
         finally:
+            if "pump_task" in locals() and not pump_task.done():
+                pump_task.cancel()
+                try:
+                    await pump_task
+                except asyncio.CancelledError:
+                    pass
             if "log_file" in locals():
                 log_file.close()
             for callback in job.callbacks:

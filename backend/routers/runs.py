@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import queue
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -15,7 +16,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from database import get_db
 from models import Dataset, Run
-from schemas import RunCreate, RunResponse, RunResult, PredictionRequest, PredictionResponse, ExplainRequest, ExplainResponse
+from schemas import (
+    RunCreate,
+    RunResponse,
+    RunResult,
+    PredictionRequest,
+    PredictionResponse,
+    ExplainRequest,
+    ExplainResponse,
+    RunCompareRequest,
+    RunCompareResponse,
+    RunCompareItem,
+)
 from services.data_service import load_dataframe
 from services.storage import storage_service
 from services.training_executor import training_executor
@@ -128,6 +140,7 @@ async def create_run(
                 "preset": request.preset,
                 "max_models": request.max_models,
                 "seed": request.seed,
+                "feature_engineering_enabled": request.feature_engineering_enabled,
             },
         )
         db.add(run)
@@ -162,6 +175,7 @@ async def create_run(
             seed=request.seed,
             max_models=request.max_models,
             cleaning_rules=cleaning_rules,
+            feature_engineering_enabled=request.feature_engineering_enabled,
         )
 
         return run
@@ -237,6 +251,40 @@ async def get_run(run_id: str, db: AsyncSession = Depends(get_db)):
     return run
 
 
+@router.get("/{run_id}/events")
+async def run_events(run_id: str, db: AsyncSession = Depends(get_db)):
+    """Server-Sent Events：实时推送训练任务状态变化。"""
+    result = await db.execute(select(Run).where(Run.id == run_id))
+    run = result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    q: queue.Queue = queue.Queue(maxsize=10)
+    training_executor.subscribe_status(run_id, q)
+
+    async def event_stream():
+        try:
+            # 先推送当前状态
+            yield f"data: {json.dumps({'status': run.status, 'error_message': run.error_message}, ensure_ascii=False)}\n\n"
+            while True:
+                try:
+                    data = await asyncio.to_thread(q.get, timeout=25)
+                except queue.Empty:
+                    yield ":keep-alive\n\n"
+                    continue
+                yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                if data.get("status") in ("completed", "failed"):
+                    break
+        finally:
+            training_executor.unsubscribe_status(run_id, q)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
+
+
 @router.get("/{run_id}/results", response_model=RunResult)
 async def get_run_results(run_id: str, db: AsyncSession = Depends(get_db)):
     """获取训练结果。"""
@@ -295,6 +343,26 @@ async def get_run_results(run_id: str, db: AsyncSession = Depends(get_db)):
 
             feature_importance = pd.read_csv(importance_path).head(20).to_dict(orient="records")
 
+        # 读取 Permutation Importance（如果存在）
+        permutation_importance = None
+        perm_importance_path = output_dir / "permutation_importance.csv"
+        if perm_importance_path.exists():
+            import pandas as pd
+
+            permutation_importance = (
+                pd.read_csv(perm_importance_path).head(20).to_dict(orient="records")
+            )
+
+        # 读取业务解读
+        business_interpretation = None
+        interpretation_path = output_dir / "business_interpretation.json"
+        if interpretation_path.exists():
+            try:
+                with open(interpretation_path, "r", encoding="utf-8") as f:
+                    business_interpretation = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass
+
         return RunResult(
             run_id=run_id,
             status=run.status,
@@ -306,6 +374,7 @@ async def get_run_results(run_id: str, db: AsyncSession = Depends(get_db)):
             cv_results=cv_results,
             leaderboard=leaderboard,
             feature_importance=feature_importance,
+            permutation_importance=permutation_importance,
             model_path=(
                 str(output_dir / "autogluon_models")
                 if (output_dir / "autogluon_models").exists()
@@ -314,10 +383,105 @@ async def get_run_results(run_id: str, db: AsyncSession = Depends(get_db)):
             report_path=(
                 str(output_dir / "report.html") if (output_dir / "report.html").exists() else None
             ),
+            business_interpretation=business_interpretation,
         )
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/compare", response_model=RunCompareResponse)
+async def compare_runs(request: RunCompareRequest, db: AsyncSession = Depends(get_db)):
+    """对比多个已完成的训练任务。"""
+    result = await db.execute(select(Run).where(Run.id.in_(request.run_ids)))
+    runs = result.scalars().all()
+    run_map = {run.id: run for run in runs}
+
+    missing = [rid for rid in request.run_ids if rid not in run_map]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {', '.join(missing)}")
+
+    not_completed = [rid for rid in request.run_ids if run_map[rid].status != "completed"]
+    if not_completed:
+        raise HTTPException(status_code=400, detail=f"以下任务尚未完成: {', '.join(not_completed)}")
+
+    items: List[RunCompareItem] = []
+    metric_name = None
+    for rid in request.run_ids:
+        run = run_map[rid]
+        output_dir = Path(run.output_dir)
+
+        metrics: Dict[str, float] = {}
+        metrics_path = output_dir / "metrics.json"
+        if metrics_path.exists():
+            try:
+                with open(metrics_path, "r", encoding="utf-8") as f:
+                    metrics_data = json.load(f)
+                metrics = {
+                    str(k): float(v) for k, v in metrics_data.get("final", {}).items()
+                    if isinstance(v, (int, float))
+                }
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        best_model = None
+        best_score = None
+        leaderboard_path = output_dir / "leaderboard.csv"
+        if leaderboard_path.exists():
+            try:
+                import pandas as pd
+                lb = pd.read_csv(leaderboard_path)
+                if not lb.empty:
+                    best_row = lb.iloc[0]
+                    best_model = str(best_row.get("model"))
+                    best_score = (
+                        float(best_row.get("score_val"))
+                        if pd.notna(best_row.get("score_val"))
+                        else None
+                    )
+            except Exception:
+                pass
+
+        feature_count = None
+        feature_columns_path = output_dir / "feature_columns.json"
+        if feature_columns_path.exists():
+            try:
+                with open(feature_columns_path, "r", encoding="utf-8") as f:
+                    feature_count = len(json.load(f))
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        snapshot = (run.config or {}).get("snapshot", {})
+        dataset_name = snapshot.get("dataset_name") or run.dataset_id
+
+        if metric_name is None and run.primary_metric:
+            metric_name = run.primary_metric
+
+        items.append(
+            RunCompareItem(
+                run_id=rid,
+                dataset_name=dataset_name,
+                status=run.status,
+                primary_metric=run.primary_metric,
+                metrics=metrics,
+                best_model=best_model,
+                best_model_score=best_score,
+                feature_count=feature_count,
+            )
+        )
+
+    # 根据 metric_name 排序选出最佳 run；没有统一指标时不指定
+    best_run_id = None
+    if metric_name:
+        scored = [
+            (item.run_id, item.metrics.get(metric_name))
+            for item in items
+            if item.metrics.get(metric_name) is not None
+        ]
+        if scored:
+            best_run_id = max(scored, key=lambda x: x[1])[0]
+
+    return RunCompareResponse(runs=items, metric_name=metric_name, best_run_id=best_run_id)
 
 
 @router.post("/{run_id}/predict", response_model=PredictionResponse)

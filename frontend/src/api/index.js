@@ -39,6 +39,7 @@ export const runApi = {
   getResults: (id) => api.get(`/runs/${id}/results`),
   predict: (id, data) => api.post(`/runs/${id}/predict`, data),
   delete: (id) => api.delete(`/runs/${id}`),
+  compare: (data) => api.post('/runs/compare', data),
 }
 
 export default api

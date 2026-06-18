@@ -85,6 +85,7 @@ class RunCreate(BaseModel):
     max_models: int = Field(default=50, ge=1, le=200)
     preset: Optional[str] = Field(default="auto")
     seed: Optional[int] = Field(default=None, ge=0)
+    feature_engineering_enabled: bool = Field(default=True)
 
 
 class RunResponse(BaseModel):
@@ -118,8 +119,10 @@ class RunResult(BaseModel):
     cv_results: Optional[Dict[str, Any]] = None
     leaderboard: List[Dict[str, Any]]
     feature_importance: List[Dict[str, Any]]
+    permutation_importance: Optional[List[Dict[str, Any]]] = None
     model_path: Optional[str]
     report_path: Optional[str]
+    business_interpretation: Optional[Dict[str, Any]] = None
 
 
 class PredictionRequest(BaseModel):
@@ -198,3 +201,30 @@ class DatasetConnectRequest(BaseModel):
     connection_params: Dict[str, Any]
     query: str
     name: Optional[str] = None
+
+
+class RunCompareRequest(BaseModel):
+    """跨 Run 模型对比请求。"""
+
+    run_ids: List[str] = Field(..., min_length=2, max_length=10)
+
+
+class RunCompareItem(BaseModel):
+    """单个 Run 的对比信息。"""
+
+    run_id: str
+    dataset_name: Optional[str] = None
+    status: str
+    primary_metric: Optional[str] = None
+    metrics: Dict[str, float]
+    best_model: Optional[str] = None
+    best_model_score: Optional[float] = None
+    feature_count: Optional[int] = None
+
+
+class RunCompareResponse(BaseModel):
+    """跨 Run 模型对比响应。"""
+
+    runs: List[RunCompareItem]
+    metric_name: Optional[str] = None
+    best_run_id: Optional[str] = None

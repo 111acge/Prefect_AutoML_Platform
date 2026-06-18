@@ -351,29 +351,59 @@ def _compute_extended_metrics(
         extended["cohens_kappa"] = float(sk_metrics.cohen_kappa_score(y_true, y_pred))
         extended["balanced_accuracy"] = float(sk_metrics.balanced_accuracy_score(y_true, y_pred))
 
-        # AUC-ROC / AUC-PR（二分类）
-        if problem_type == "binary":
+        # AUC-ROC / AUC-PR（二分类 + 多分类 OvR 宏平均）
+        if problem_type in ["binary", "multiclass"]:
             try:
                 y_proba = predictor.predict_proba(X_test)
-                pos_label = predictor.class_labels[1]
-                extended["auc_roc"] = float(sk_metrics.roc_auc_score(y_true, y_proba[pos_label]))
-                extended["auc_pr"] = float(
-                    sk_metrics.average_precision_score(y_true, y_proba[pos_label])
-                )
+                classes = predictor.class_labels
 
-                # ROC / PR 曲线数据，用于报告图表
-                fpr, tpr, _ = sk_metrics.roc_curve(y_true, y_proba[pos_label], pos_label=pos_label)
-                extended["roc_curve"] = {
-                    "fpr": fpr.tolist(),
-                    "tpr": tpr.tolist(),
-                }
-                precision_curve, recall_curve, _ = sk_metrics.precision_recall_curve(
-                    y_true, y_proba[pos_label], pos_label=pos_label
-                )
-                extended["pr_curve"] = {
-                    "precision": precision_curve.tolist(),
-                    "recall": recall_curve.tolist(),
-                }
+                if problem_type == "binary":
+                    pos_label = classes[1]
+                    extended["auc_roc"] = float(sk_metrics.roc_auc_score(y_true, y_proba[pos_label]))
+                    extended["auc_pr"] = float(
+                        sk_metrics.average_precision_score(y_true, y_proba[pos_label])
+                    )
+                    fpr, tpr, _ = sk_metrics.roc_curve(y_true, y_proba[pos_label], pos_label=pos_label)
+                    extended["roc_curve"] = {"fpr": fpr.tolist(), "tpr": tpr.tolist()}
+                    precision_curve, recall_curve, _ = sk_metrics.precision_recall_curve(
+                        y_true, y_proba[pos_label], pos_label=pos_label
+                    )
+                    extended["pr_curve"] = {
+                        "precision": precision_curve.tolist(),
+                        "recall": recall_curve.tolist(),
+                    }
+                else:
+                    from sklearn.preprocessing import label_binarize
+
+                    y_true_bin = label_binarize(y_true, classes=classes)
+                    proba_arr = y_proba[classes].values
+
+                    # ROC 宏平均
+                    fpr_grid = np.linspace(0.0, 1.0, 100)
+                    tpr_list = []
+                    for i, cls in enumerate(classes):
+                        fpr_i, tpr_i, _ = sk_metrics.roc_curve(y_true_bin[:, i], y_proba[cls])
+                        tpr_list.append(np.interp(fpr_grid, fpr_i, tpr_i))
+                    tpr_macro = np.mean(tpr_list, axis=0)
+                    extended["auc_roc"] = float(
+                        sk_metrics.roc_auc_score(y_true_bin, proba_arr, average="macro", multi_class="ovr")
+                    )
+                    extended["roc_curve"] = {"fpr": fpr_grid.tolist(), "tpr": tpr_macro.tolist()}
+
+                    # PR 宏平均
+                    recall_grid = np.linspace(0.0, 1.0, 100)
+                    pr_list = []
+                    for i, cls in enumerate(classes):
+                        pr_i, rec_i, _ = sk_metrics.precision_recall_curve(y_true_bin[:, i], y_proba[cls])
+                        pr_list.append(np.interp(recall_grid, rec_i[::-1], pr_i[::-1]))
+                    pr_macro = np.mean(pr_list, axis=0)
+                    extended["auc_pr"] = float(
+                        sk_metrics.average_precision_score(y_true_bin, proba_arr, average="macro")
+                    )
+                    extended["pr_curve"] = {
+                        "recall": recall_grid.tolist(),
+                        "precision": pr_macro.tolist(),
+                    }
             except Exception:
                 pass
 
@@ -736,6 +766,7 @@ def automl_pipeline(
     seed: Optional[int] = None,
     max_models: int = 50,
     cleaning_rules: Optional[Dict[str, Any]] = None,
+    feature_engineering_enabled: bool = True,
 ) -> Dict[str, Any]:
     """
     端到端 AutoML Pipeline。
@@ -772,6 +803,7 @@ def automl_pipeline(
         primary_metric=primary_metric,
         max_models=max_models,
     )
+    strategy["feature_engineering_enabled"] = feature_engineering_enabled
 
     # 5. 划分训练集/测试集（必须在预处理前，防止数据泄露）
     split_result = split_data_task(df, target_column, task_type=task_type)

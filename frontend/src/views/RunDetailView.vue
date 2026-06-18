@@ -123,11 +123,73 @@
         </template>
       </template>
 
+      <template v-if="results.business_interpretation">
+        <h3>业务解读摘要</h3>
+        <el-card shadow="never" class="interpretation-card">
+          <el-alert
+            v-if="results.business_interpretation.provider === 'rule_template'"
+            title="当前为规则模板生成的兜底解读"
+            type="info"
+            :closable="false"
+            style="margin-bottom: 12px;"
+          />
+          <p class="interpretation-summary">
+            {{ results.business_interpretation.business_summary }}
+          </p>
+
+          <div v-if="results.business_interpretation.key_insights?.length" class="interpretation-section">
+            <h4>关键发现</h4>
+            <ul>
+              <li v-for="(item, idx) in results.business_interpretation.key_insights" :key="'insight-' + idx">
+                {{ item }}
+              </li>
+            </ul>
+          </div>
+
+          <div v-if="results.business_interpretation.feature_interpretations?.length" class="interpretation-section">
+            <h4>Top 特征业务含义</h4>
+            <ul>
+              <li v-for="(item, idx) in results.business_interpretation.feature_interpretations" :key="'feature-' + idx">
+                <strong>{{ item.feature || item }}</strong>
+                <span v-if="item.interpretation">：{{ item.interpretation }}</span>
+              </li>
+            </ul>
+          </div>
+
+          <div v-if="results.business_interpretation.caveats?.length" class="interpretation-section">
+            <h4>使用注意</h4>
+            <ul>
+              <li v-for="(item, idx) in results.business_interpretation.caveats" :key="'caveat-' + idx">
+                {{ item }}
+              </li>
+            </ul>
+          </div>
+
+          <div v-if="results.business_interpretation.recommendations?.length" class="interpretation-section">
+            <h4>下一步建议</h4>
+            <ul>
+              <li v-for="(item, idx) in results.business_interpretation.recommendations" :key="'rec-' + idx">
+                {{ item }}
+              </li>
+            </ul>
+          </div>
+        </el-card>
+      </template>
+
       <h3>特征重要性 Top 15</h3>
       <EChart :option="featureImportanceOption" height="360px" />
 
       <h3>模型排行榜</h3>
-      <el-table :data="results.leaderboard" style="width: 100%" max-height="300px">
+      <div class="leaderboard-controls">
+        <el-select v-model="familyFilter" placeholder="模型族" style="width: 140px">
+          <el-option label="全部" value="all" />
+          <el-option v-for="f in families" :key="f" :label="f" :value="f" />
+        </el-select>
+        <el-select v-model="sortBy" placeholder="排序依据" style="width: 160px; margin-left: 10px">
+          <el-option v-for="col in sortableColumns" :key="col" :label="col" :value="col" />
+        </el-select>
+      </div>
+      <el-table :data="processedLeaderboard" style="width: 100%" max-height="300px">
         <el-table-column
           v-for="col in leaderboardColumns"
           :key="col"
@@ -145,6 +207,11 @@
           :label="col"
         />
       </el-table>
+
+      <template v-if="results.permutation_importance && results.permutation_importance.length">
+        <h3>Permutation Importance Top 15</h3>
+        <EChart :option="permutationImportanceOption" height="360px" />
+      </template>
 
       <div class="action-buttons">
         <el-button type="primary" @click="showPredictDialog = true">使用模型预测</el-button>
@@ -225,7 +292,11 @@ const predictInput = ref('')
 const predictResult = ref(null)
 const predicting = ref(false)
 const logs = ref('')
-let timer = null
+let logTimer = null
+let evtSource = null
+
+const familyFilter = ref('all')
+const sortBy = ref('score_val')
 
 const statusType = (status) => {
   const map = {
@@ -238,9 +309,43 @@ const statusType = (status) => {
 }
 
 const leaderboardColumns = computed(() => {
-  if (!results.value || !results.value.leaderboard.length) return []
-  return Object.keys(results.value.leaderboard[0])
+  const rows = processedLeaderboard.value
+  if (!rows.length) return []
+  return Object.keys(rows[0])
 })
+
+const getModelFamily = (name) => {
+  const n = (name || '').toLowerCase()
+  if (n.includes('lightgbm') || n.includes('catboost') || n.includes('xgboost')) return 'GBDT'
+  if (n.includes('randomforest') || n.includes('extratrees') || n.includes('xt_')) return '树集成'
+  if (n.includes('neuralnet') || n.includes('torch') || n.includes('mlp') || n.includes('fastai')) return '神经网络'
+  if (n.includes('kneighbors') || n.includes('knn')) return 'KNN'
+  if (n.includes('linearmodel') || n.includes('ridge') || n.includes('elastic') || n.includes('logistic')) return '线性模型'
+  return '其他'
+}
+
+const processedLeaderboard = computed(() => {
+  if (!results.value || !results.value.leaderboard.length) return []
+  let rows = results.value.leaderboard.map((row) => ({ ...row, family: getModelFamily(row.model) }))
+  if (familyFilter.value && familyFilter.value !== 'all') {
+    rows = rows.filter((row) => row.family === familyFilter.value)
+  }
+  const key = sortBy.value || 'score_val'
+  rows = [...rows].sort((a, b) => {
+    const av = a[key]
+    const bv = b[key]
+    if (typeof av === 'number' && typeof bv === 'number') return bv - av
+    return String(av || '').localeCompare(String(bv || ''))
+  })
+  return rows
+})
+
+const families = computed(() => {
+  if (!results.value || !results.value.leaderboard.length) return []
+  return Array.from(new Set(results.value.leaderboard.map((row) => getModelFamily(row.model)))).sort()
+})
+
+const sortableColumns = computed(() => leaderboardColumns.value)
 
 const importanceColumns = computed(() => {
   if (!results.value || !results.value.feature_importance.length) return []
@@ -364,6 +469,29 @@ const featureImportanceOption = computed(() => {
   }
 })
 
+const permutationImportanceOption = computed(() => {
+  const data = results.value?.permutation_importance?.slice(0, 15) || []
+  if (!data.length) return {}
+
+  const sorted = [...data].sort((a, b) => a.importance - b.importance)
+  const names = sorted.map((row) => row.feature || row['Unnamed: 0'] || '未知')
+  const values = sorted.map((row) => row.importance)
+
+  return {
+    tooltip: { trigger: 'axis' },
+    grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+    xAxis: { type: 'value', name: 'Permutation Importance' },
+    yAxis: { type: 'category', data: names },
+    series: [
+      {
+        type: 'bar',
+        data: values,
+        itemStyle: { color: '#67c23a' },
+      },
+    ],
+  }
+})
+
 const fetchRun = async () => {
   try {
     const res = await runApi.get(runId)
@@ -430,20 +558,76 @@ const formatDate = (date) => {
   return new Date(date).toLocaleString()
 }
 
-onMounted(() => {
-  loadData()
+const eventBase = import.meta.env.VITE_API_BASE_URL || '/api'
+const eventsUrl = eventBase.startsWith('http')
+  ? `${eventBase}/runs/${runId}/events`
+  : `${window.location.origin}${eventBase}/runs/${runId}/events`
+
+const isTerminal = (status) => status === 'completed' || status === 'failed'
+
+const handleStatusEvent = (payload) => {
+  if (payload.status !== undefined) {
+    run.value.status = payload.status
+  }
+  if (payload.error_message !== undefined) {
+    run.value.error_message = payload.error_message
+  }
   fetchLogs()
-  timer = setInterval(async () => {
-    await fetchRun()
-    await fetchLogs()
-    if (run.value.status === 'completed' && !results.value) {
-      await fetchResults()
+  if (run.value.status === 'completed' && !results.value) {
+    fetchResults()
+  }
+  if (isTerminal(run.value.status)) {
+    closeEventSource()
+  }
+}
+
+const connectEvents = () => {
+  closeEventSource()
+  try {
+    evtSource = new EventSource(eventsUrl)
+    evtSource.onmessage = (e) => {
+      try {
+        const payload = JSON.parse(e.data)
+        handleStatusEvent(payload)
+      } catch (err) {
+        console.error('解析 SSE 消息失败:', err)
+      }
     }
-  }, 3000)
+    evtSource.onerror = (err) => {
+      console.error('SSE 连接错误，3 秒后重连:', err)
+      closeEventSource()
+      if (!isTerminal(run.value.status)) {
+        setTimeout(connectEvents, 3000)
+      }
+    }
+  } catch (err) {
+    console.error('创建 EventSource 失败:', err)
+  }
+}
+
+const closeEventSource = () => {
+  if (evtSource) {
+    evtSource.close()
+    evtSource = null
+  }
+}
+
+onMounted(async () => {
+  await loadData()
+  await fetchLogs()
+  if (!isTerminal(run.value.status)) {
+    connectEvents()
+  }
+  logTimer = setInterval(() => {
+    if (!isTerminal(run.value.status)) {
+      fetchLogs()
+    }
+  }, 5000)
 })
 
 onUnmounted(() => {
-  if (timer) clearInterval(timer)
+  closeEventSource()
+  if (logTimer) clearInterval(logTimer)
 })
 </script>
 
@@ -521,5 +705,41 @@ onUnmounted(() => {
   border: 1px solid #ebeef5;
   border-radius: 4px;
   background-color: #fff;
+}
+
+.leaderboard-controls {
+  margin-bottom: 12px;
+}
+
+.interpretation-card {
+  background-color: #f7f9fc;
+}
+
+.interpretation-summary {
+  font-size: 15px;
+  line-height: 1.8;
+  color: #303133;
+  margin-bottom: 16px;
+}
+
+.interpretation-section {
+  margin-top: 16px;
+}
+
+.interpretation-section h4 {
+  margin: 12px 0 8px;
+  color: #409eff;
+  font-size: 14px;
+}
+
+.interpretation-section ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.interpretation-section li {
+  margin-bottom: 6px;
+  line-height: 1.6;
+  color: #606266;
 }
 </style>

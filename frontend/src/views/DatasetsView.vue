@@ -52,6 +52,7 @@
             :auto-upload="false"
             :on-change="handleFileChange"
             :limit="1"
+            accept=".csv,.xlsx,.xls,.parquet,.jsonl,.json"
           >
             <el-button type="primary">选择文件</el-button>
           </el-upload>
@@ -83,6 +84,14 @@
             <el-option label="回归" value="regression" />
           </el-select>
         </el-form-item>
+        <el-form-item label="快速模式">
+          <el-radio-group v-model="trainQuickMode" @change="onTrainQuickModeChange">
+            <el-radio-button label="quick">快速体验</el-radio-button>
+            <el-radio-button label="standard">标准</el-radio-button>
+            <el-radio-button label="deep">深度</el-radio-button>
+            <el-radio-button label="unlimited">不限制</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
         <el-form-item label="时间预算(分钟)">
           <div style="display: flex; align-items: center; gap: 12px;">
             <el-input-number
@@ -106,7 +115,15 @@
         <el-form-item label="随机种子">
           <el-input-number v-model="trainForm.seed" :min="0" :controls="false" style="width: 100%" placeholder="留空则不固定" />
         </el-form-item>
+        <el-form-item label="特征工程">
+          <el-switch
+            v-model="trainForm.feature_engineering_enabled"
+            active-text="启用高级特征工程"
+            inactive-text="仅基础清洗"
+          />
+        </el-form-item>
       </el-form>
+
       <template #footer>
         <el-button @click="showTrainDialog = false">取消</el-button>
         <el-button type="primary" @click="submitTrain" :loading="training">开始训练</el-button>
@@ -253,8 +270,25 @@ const trainForm = ref({
   time_budget_minutes: 10,
   preset: 'auto',
   seed: null,
+  feature_engineering_enabled: true,
 })
 const trainUnlimitedTime = ref(false)
+const trainQuickMode = ref('standard')
+
+const TRAIN_QUICK_MODES = {
+  quick: { preset: 'good_quality', time_budget_minutes: 1 },
+  standard: { preset: 'auto', time_budget_minutes: 10 },
+  deep: { preset: 'best_quality', time_budget_minutes: 30 },
+  unlimited: { preset: 'best_quality', time_budget_minutes: null },
+}
+
+const onTrainQuickModeChange = (mode) => {
+  const cfg = TRAIN_QUICK_MODES[mode]
+  if (!cfg) return
+  trainForm.value.preset = cfg.preset
+  trainForm.value.time_budget_minutes = cfg.time_budget_minutes ?? 10
+  trainUnlimitedTime.value = cfg.time_budget_minutes === null
+}
 
 const resetTrainForm = () => {
   trainForm.value = {
@@ -264,8 +298,10 @@ const resetTrainForm = () => {
     time_budget_minutes: 10,
     preset: 'auto',
     seed: null,
+    feature_engineering_enabled: true,
   }
   trainUnlimitedTime.value = false
+  trainQuickMode.value = 'standard'
 }
 
 const fetchDatasets = async () => {

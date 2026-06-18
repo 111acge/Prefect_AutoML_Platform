@@ -86,6 +86,14 @@
             <el-option label="回归" value="regression" />
           </el-select>
         </el-form-item>
+        <el-form-item label="快速模式">
+          <el-radio-group v-model="quickMode" @change="onQuickModeChange">
+            <el-radio-button label="quick">快速体验</el-radio-button>
+            <el-radio-button label="standard">标准</el-radio-button>
+            <el-radio-button label="deep">深度</el-radio-button>
+            <el-radio-button label="unlimited">不限制</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
         <el-form-item label="时间预算(分钟)">
           <div style="display: flex; align-items: center; gap: 12px;">
             <el-input-number
@@ -108,6 +116,13 @@
         </el-form-item>
         <el-form-item label="随机种子">
           <el-input-number v-model="createForm.seed" :min="0" :controls="false" style="width: 100%" placeholder="留空则不固定" />
+        </el-form-item>
+        <el-form-item label="特征工程">
+          <el-switch
+            v-model="createForm.feature_engineering_enabled"
+            active-text="启用高级特征工程"
+            inactive-text="仅基础清洗"
+          />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -135,6 +150,14 @@ let timer = null
 
 const datasetColumns = ref([])
 const unlimitedTime = ref(false)
+const quickMode = ref('standard')
+
+const QUICK_MODES = {
+  quick: { preset: 'good_quality', time_budget_minutes: 1 },
+  standard: { preset: 'auto', time_budget_minutes: 10 },
+  deep: { preset: 'best_quality', time_budget_minutes: 30 },
+  unlimited: { preset: 'best_quality', time_budget_minutes: null },
+}
 
 const createForm = ref({
   dataset_id: '',
@@ -143,6 +166,7 @@ const createForm = ref({
   time_budget_minutes: 10,
   preset: 'auto',
   seed: null,
+  feature_engineering_enabled: true,
 })
 
 const statusType = (status) => {
@@ -200,6 +224,14 @@ const submitCreate = async () => {
   }
 }
 
+const onQuickModeChange = (mode) => {
+  const cfg = QUICK_MODES[mode]
+  if (!cfg) return
+  createForm.value.preset = cfg.preset
+  createForm.value.time_budget_minutes = cfg.time_budget_minutes ?? 10
+  unlimitedTime.value = cfg.time_budget_minutes === null
+}
+
 const resetCreateForm = () => {
   createForm.value = {
     dataset_id: '',
@@ -208,8 +240,10 @@ const resetCreateForm = () => {
     time_budget_minutes: 10,
     preset: 'auto',
     seed: null,
+    feature_engineering_enabled: true,
   }
   unlimitedTime.value = false
+  quickMode.value = 'standard'
   datasetColumns.value = []
 }
 

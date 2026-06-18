@@ -15,6 +15,7 @@
         <el-menu-item index="/">首页</el-menu-item>
         <el-menu-item index="/datasets">数据集</el-menu-item>
         <el-menu-item index="/runs">训练任务</el-menu-item>
+        <el-menu-item index="/compare">模型对比</el-menu-item>
       </el-menu>
     </el-header>
     <el-main>

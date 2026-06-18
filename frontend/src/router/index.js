@@ -3,6 +3,7 @@ import HomeView from '@/views/HomeView.vue'
 import DatasetsView from '@/views/DatasetsView.vue'
 import RunsView from '@/views/RunsView.vue'
 import RunDetailView from '@/views/RunDetailView.vue'
+import CompareView from '@/views/CompareView.vue'
 
 const routes = [
   {
@@ -24,6 +25,11 @@ const routes = [
     path: '/runs/:id',
     name: 'run-detail',
     component: RunDetailView,
+  },
+  {
+    path: '/compare',
+    name: 'compare',
+    component: CompareView,
   },
 ]
 

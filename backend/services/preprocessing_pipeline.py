@@ -160,28 +160,33 @@ class DataPreprocessor(BaseEstimator, TransformerMixin):
             if series.min() >= 0 and series.skew() > log_skew_threshold:
                 self.log_transform_cols.append(col)
 
-        # 高级特征工程
-        preprocessing = self.strategy.get("preprocessing", {})
-        self.feature_engineer = FeatureEngineer(
-            target_column=self.target_column,
-            outlier_strategy=preprocessing.get("outlier_strategy", "iqr"),
-            scaler_type=preprocessing.get("scaler_type", "auto"),
-            rare_category_threshold=preprocessing.get("rare_category_threshold", 10),
-            datetime_cyclical=preprocessing.get("datetime_cyclical", True),
-            text_embeddings=preprocessing.get("text_embeddings", False),
-            one_hot_threshold=preprocessing.get("one_hot_threshold", 10),
-            target_encoding_threshold=preprocessing.get("target_encoding_threshold", 50),
-            missing_indicator=preprocessing.get("missing_indicator", True),
-            missing_indicator_threshold=preprocessing.get("missing_indicator_threshold", 0.05),
-            correlation_threshold=preprocessing.get("correlation_threshold", 0.95),
-            low_variance_threshold=preprocessing.get("low_variance_threshold", 0.0),
-            pca_variance_ratio=preprocessing.get("pca_variance_ratio", 0.95),
-            enable_pca=preprocessing.get("enable_pca", False),
-        )
-        self.feature_engineer.fit(df)
+        # 高级特征工程（可通过开关关闭）
+        if self.strategy.get("feature_engineering_enabled", True):
+            preprocessing = self.strategy.get("preprocessing", {})
+            self.feature_engineer = FeatureEngineer(
+                target_column=self.target_column,
+                outlier_strategy=preprocessing.get("outlier_strategy", "iqr"),
+                scaler_type=preprocessing.get("scaler_type", "auto"),
+                rare_category_threshold=preprocessing.get("rare_category_threshold", 10),
+                datetime_cyclical=preprocessing.get("datetime_cyclical", True),
+                text_embeddings=preprocessing.get("text_embeddings", False),
+                one_hot_threshold=preprocessing.get("one_hot_threshold", 10),
+                target_encoding_threshold=preprocessing.get("target_encoding_threshold", 50),
+                missing_indicator=preprocessing.get("missing_indicator", True),
+                missing_indicator_threshold=preprocessing.get("missing_indicator_threshold", 0.05),
+                correlation_threshold=preprocessing.get("correlation_threshold", 0.95),
+                low_variance_threshold=preprocessing.get("low_variance_threshold", 0.0),
+                pca_variance_ratio=preprocessing.get("pca_variance_ratio", 0.95),
+                enable_pca=preprocessing.get("enable_pca", False),
+            )
+            self.feature_engineer.fit(df)
+            transformed_sample = self.feature_engineer.transform(self._base_transform(df))
+        else:
+            self.feature_engineer = None
+            transformed_sample = self._base_transform(df)
+            logger.info("高级特征工程已关闭")
 
         # 记录最终特征列（用于预测校验）
-        transformed_sample = self.feature_engineer.transform(self._base_transform(df))
         self.feature_columns = [c for c in transformed_sample.columns if c != self.target_column]
         self.feature_dtypes = {
             col: str(transformed_sample[col].dtype) for col in self.feature_columns

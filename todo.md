@@ -47,7 +47,7 @@
 - [x] P1 数据清洗规则可配置
 - [x] P2 LLM 辅助 Schema 推断（失败降级到规则引擎）
 - [ ] P2 用户上传 Schema（JSON/YAML）并与自动推断 Schema 合并
-- [ ] P2 支持 Parquet / JSON Lines 格式上传
+- [x] P2 支持 Parquet / JSON Lines 格式上传
 
 ---
 
@@ -76,9 +76,9 @@
 - [x] **P1 全局超时控制：超过 `time_budget_minutes` 后返回当前最优结果（Best-so-far）**
 - [ ] P2 断点续跑：崩溃后根据已完成的 Task 状态恢复
 - [ ] P2 多任务队列：支持排队、优先级、资源预留
-- [ ] P1 训练状态 WebSocket / Server-Sent Events 实时推送（替代 5 秒轮询）
-- [ ] P1 子进程日志过滤：抑制 Prefect 内部 `EventsWorker` 等噪音，保留业务日志
-- [ ] P1 显式 CV 结果用于 AutoGluon 验证策略（透传 `num_bag_folds` / `holdout_frac`）
+- [x] P1 训练状态 WebSocket / Server-Sent Events 实时推送（替代 5 秒轮询）
+- [x] P1 子进程日志过滤：抑制 Prefect 内部 `EventsWorker` 等噪音，保留业务日志
+- [x] P1 显式 CV 结果用于 AutoGluon 验证策略（透传 `num_bag_folds` / `holdout_frac`）
 
 ---
 
@@ -113,7 +113,7 @@
 - [ ] P2 交叉特征：基于树模型重要性反馈自动尝试二阶交叉
 - [ ] P2 特征选择：Filter / L1 / Permutation Importance / SHAP
 - [ ] P2 Target Encoding 严格在 CV 每折内 fit（当前在训练集整体 fit，需评估是否改为折内）
-- [ ] P2 前端特征工程开关：PCA、Target Encoding、文本 Embedding 等可配置
+- [x] P2 前端特征工程开关：PCA、Target Encoding、文本 Embedding 等可配置
 - [ ] P2 自动交叉特征：基于树模型重要性反馈尝试二阶交叉
 
 ---
@@ -160,9 +160,9 @@
 - [x] P1 混淆矩阵、ROC/PR 曲线、回归残差图
 - [x] **P2 LLM 报告增强：业务语言解读 + 异常诊断 + 特征 Top-N 业务含义**
 - [ ] P2 反事实解释
-- [ ] P1 报告可视化：混淆矩阵、ROC/PR 曲线图
-- [ ] P1 SHAP / Permutation Importance 可视化条形图
-- [ ] P2 跨 Run 模型对比页面/接口
+- [x] P1 报告可视化：混淆矩阵、ROC/PR 曲线图
+- [x] P1 SHAP / Permutation Importance 可视化条形图
+- [x] P2 跨 Run 模型对比页面/接口
 
 ---
 
@@ -199,9 +199,9 @@
 - [x] P1 混淆矩阵 / ROC / PR 曲线交互图
 - [ ] P2 与 tech-portfolio 统一视觉风格
 - [ ] P2 自然语言创建任务
-- [ ] P1 Preset / 时间预算快捷按钮（快速体验、标准、不限制）
-- [ ] P1 模型排行榜按模型族筛选/排序（树模型 / 线性 / 神经网络）
-- [ ] P2 任务详情页直接展示业务解读摘要（当前仅在 HTML 报告中）
+- [x] P1 Preset / 时间预算快捷按钮（快速体验、标准、不限制）
+- [x] P1 模型排行榜按模型族筛选/排序（树模型 / 线性 / 神经网络）
+- [x] P2 任务详情页直接展示业务解读摘要（当前仅在 HTML 报告中）
 
 ---
 
@@ -251,14 +251,14 @@
 5. ~~**P2 LLM 业务解读报告**：`report.html` 已增加“业务结论”章节。~~
 6. ~~**P1 训练失败错误透传**：前端任务详情页已展示 `error.json` 完整错误信息。~~
 
-下一步建议：
+下一步建议（已在本次迭代完成）：
 
-1. **P1 训练状态实时推送**：用 WebSocket / SSE 替代前端 5 秒轮询，体验提升最明显。
-2. **P1 子进程日志降噪**：过滤 Prefect 内部 `EventsWorker` 等噪音，只保留业务日志。
-3. **P1 报告可视化补全**：把已有的 ROC/PR/混淆矩阵数据画成图表，让报告更直观。
-4. **P1 前端 Preset / 时间预算快捷按钮**：降低用户决策成本。
-5. **P2 前端特征工程开关**：让用户能开关 PCA、Target Encoding、文本 Embedding 等。
-6. **P2 跨 Run 模型对比**：支持选中多个任务对比指标和模型。
+1. ~~**P1 训练状态实时推送**：用 WebSocket / SSE 替代前端 5 秒轮询，体验提升最明显。~~
+2. ~~**P1 子进程日志降噪**：过滤 Prefect 内部 `EventsWorker` 等噪音，只保留业务日志。~~
+3. ~~**P1 报告可视化补全**：把已有的 ROC/PR/混淆矩阵数据画成图表，让报告更直观。~~
+4. ~~**P1 前端 Preset / 时间预算快捷按钮**：降低用户决策成本。~~
+5. ~~**P2 前端特征工程开关**：让用户能开关 PCA、Target Encoding、文本 Embedding 等。~~
+6. ~~**P2 跨 Run 模型对比**：支持选中多个任务对比指标和模型。~~
 
 ---
 

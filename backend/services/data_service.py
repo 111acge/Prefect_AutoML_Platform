@@ -21,6 +21,8 @@ def load_dataframe(file_path: Union[str, Path]) -> pd.DataFrame:
         return pd.read_excel(file_path)
     elif suffix == ".parquet":
         return pd.read_parquet(file_path)
+    elif suffix in (".jsonl", ".json"):
+        return pd.read_json(file_path, lines=True)
     else:
         raise ValueError(f"不支持的文件格式: {suffix}")
 
