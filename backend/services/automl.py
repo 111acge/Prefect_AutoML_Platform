@@ -79,6 +79,7 @@ class AutoMLService:
             "train_data": train_data,
             "presets": preset,
             "time_limit": time_limit,
+            "dynamic_stacking": False,  # 禁用 DyStack，避免某些场景下 Learner 被重复 fit
         }
         # 动态模型空间
         hyperparameters = self._select_hyperparameters(strategy, seed)
