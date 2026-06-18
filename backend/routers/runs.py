@@ -285,7 +285,7 @@ async def get_run_results(run_id: str, db: AsyncSession = Depends(get_db)):
         if leaderboard_path.exists():
             import pandas as pd
 
-            leaderboard = pd.read_csv(leaderboard_path).head(10).to_dict(orient="records")
+            leaderboard = pd.read_csv(leaderboard_path).head(25).to_dict(orient="records")
 
         # 读取特征重要性
         feature_importance = []

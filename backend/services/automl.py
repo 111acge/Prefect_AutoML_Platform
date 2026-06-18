@@ -342,18 +342,33 @@ class AutoMLService:
 
         data_size_label = strategy.get("data_size_label", "medium")
         if data_size_label == "small":
-            # 小数据尝试更多模型，包括 KNN / LR / NN
+            # 小数据也展示完整、多样的模型空间：多组超参 + 全量典型模型
             hp: Dict[str, Any] = {
-                "GBM": [{"extra_trees": False}, {"extra_trees": True}],
-                "CAT": {},
-                "XGB": {},
-                "RF": {},
-                "XT": {},
-                "KNN": {},
-                "LR": {},
+                "GBM": [
+                    {"extra_trees": False},
+                    {"extra_trees": True},
+                    {"learning_rate": 0.05, "num_leaves": 31},
+                ],
+                "CAT": [
+                    {},
+                    {"iterations": 1000, "depth": 8},
+                ],
+                "XGB": [
+                    {},
+                    {"max_depth": 6, "eta": 0.1},
+                ],
+                "RF": [
+                    {"n_estimators": 300},
+                    {"n_estimators": 500, "max_features": "sqrt"},
+                ],
+                "XT": [
+                    {"n_estimators": 300},
+                    {"n_estimators": 500},
+                ],
+                "KNN": [{}, {"weights": "distance"}],
+                "LR": [{}, {"C": 0.1}, {"C": 10}],
+                "NN_TORCH": {"seed_value": seed} if seed is not None else {},
             }
-            if seed is not None:
-                hp["NN_TORCH"] = {"seed_value": seed}
             return hp
         elif data_size_label == "large":
             # 大数据聚焦高效线性/树模型

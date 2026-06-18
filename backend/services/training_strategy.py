@@ -78,9 +78,10 @@ def build_strategy(
             preset = "medium_quality"
             rationale.append("大数据/高维场景，使用 medium_quality 控制训练时间")
         elif data_size_label == "small":
-            # 小数据集用 best_quality 容易过拟合，且收益低
-            preset = "good_quality"
-            rationale.append("小数据集使用 good_quality，避免 best_quality 过度堆叠")
+            # 小数据集也启用 best_quality，展示完整、先进的模型空间；
+            # AutoGluon 内部会根据数据量自动调节，实际并不会无限制堆叠。
+            preset = "best_quality"
+            rationale.append("小数据集使用 best_quality，展示完整模型空间")
         else:
             preset = "best_quality"
             rationale.append("中等规模数据使用 best_quality")
@@ -108,19 +109,21 @@ def build_strategy(
         max_models = user_max_models
         rationale.append(f"使用用户指定 max_models={max_models}")
     elif data_size_label == "small":
-        max_models = 10
-        rationale.append("小数据集减少模型数量，降低过拟合风险")
+        # 小数据集展示完整模型空间，仍保持可控数量
+        max_models = 25
+        rationale.append("小数据集使用 25 个模型，展示完整模型空间")
     elif data_size_label == "large":
         max_models = 50
         rationale.append("大数据集使用更多模型提升泛化")
     else:
         max_models = 25
 
-    if data_size_label == "small" or max_models <= 10:
-        auto_stack = False
-        num_bag_folds = 0
-        num_stack_levels = 0
-        rationale.append("小数据集关闭 stacking/bagging，防止过拟合")
+    if data_size_label == "small":
+        # 小数据集启用轻量 stacking/bagging，体验完整 AutoML 流程
+        auto_stack = True
+        num_bag_folds = 3
+        num_stack_levels = 1
+        rationale.append("小数据集启用轻量 stacking/bagging")
     elif data_size_label == "large" and max_models >= 30:
         auto_stack = True
         num_bag_folds = 3

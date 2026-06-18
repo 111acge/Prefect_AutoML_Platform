@@ -19,13 +19,15 @@ def _metadata(n_samples: int, n_features: int, **kwargs):
     }
 
 
-def test_small_classification_uses_good_quality():
+def test_small_classification_uses_best_quality_with_stacking():
     metadata = _metadata(150, 5)
     strategy = build_strategy(metadata, "multiclass_classification", user_time_budget_minutes=1.0)
     assert strategy.data_size_label == "small"
-    assert strategy.preset == "good_quality"
-    assert strategy.auto_stack is False
-    assert strategy.num_stack_levels == 0
+    assert strategy.preset == "best_quality"
+    assert strategy.auto_stack is True
+    assert strategy.num_stack_levels == 1
+    assert strategy.num_bag_folds == 3
+    assert strategy.max_models == 25
     assert strategy.primary_metric == "log_loss"
 
 

@@ -441,7 +441,7 @@ def create_artifacts_task(
     if leaderboard_path.exists():
         import pandas as pd
 
-        leaderboard_df = pd.read_csv(leaderboard_path).head(10)
+        leaderboard_df = pd.read_csv(leaderboard_path).head(25)
         create_table_artifact(
             key="leaderboard",
             table=leaderboard_df.to_dict(orient="records"),
@@ -534,7 +534,7 @@ def generate_report_task(
     if leaderboard_path.exists():
         import pandas as pd
 
-        leaderboard_df = pd.read_csv(leaderboard_path).head(10)
+        leaderboard_df = pd.read_csv(leaderboard_path).head(25)
         leaderboard = leaderboard_df.to_dict(orient="records")
         leaderboard_columns = leaderboard_df.columns.tolist()
 

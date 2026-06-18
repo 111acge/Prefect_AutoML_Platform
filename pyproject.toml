@@ -36,7 +36,16 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "tqdm>=4.65.0",
     "packaging>=24.0",
+    "torch>=2.0.0",
 ]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [project.optional-dependencies]
 dev = [

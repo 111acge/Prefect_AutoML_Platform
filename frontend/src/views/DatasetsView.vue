@@ -474,8 +474,8 @@ const trainDefaultDataset = async () => {
       dataset_id: defaultDataset.id,
       target_column: 'target',
       task_type: 'multiclass_classification',
-      time_budget_minutes: 2,
-      preset: 'medium_quality',
+      time_budget_minutes: 5,
+      preset: 'auto',
     })
     ElMessage.success('默认数据集训练任务已启动')
     router.push(`/runs/${runRes.data.id}`)
