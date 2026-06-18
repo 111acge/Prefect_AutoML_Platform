@@ -22,6 +22,7 @@ def test_sqlite_connection():
 
         engine = create_engine(f"sqlite:///{db_path}")
         df.to_sql("test_table", engine, index=False)
+        engine.dispose()
 
         result = load_from_sql("sqlite", {"file_path": db_path}, "SELECT * FROM test_table")
         assert len(result) == 3

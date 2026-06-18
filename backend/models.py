@@ -40,7 +40,9 @@ class Run(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
     dataset_id: Mapped[str] = mapped_column(String(36), nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="pending")
-    time_budget_minutes: Mapped[float] = mapped_column(Float, default=10.0)
+    # 默认值由 Pydantic 模式（RunCreate.time_budget_minutes=10）控制，数据库不设置 default，
+    # 以便显式传入 None 时能够保存为 NULL（表示训练时间不限制）。
+    time_budget_minutes: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     primary_metric: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     output_dir: Mapped[str] = mapped_column(String(512), nullable=False)
     prefect_flow_run_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

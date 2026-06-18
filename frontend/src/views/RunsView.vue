@@ -32,7 +32,11 @@
             <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column prop="time_budget_minutes" label="时间预算(分钟)" />
+        <el-table-column label="时间预算(分钟)">
+          <template #default="{ row }">
+            {{ row.time_budget_minutes ?? '无限制' }}
+          </template>
+        </el-table-column>
         <el-table-column label="随机种子">
           <template #default="{ row }">
             {{ row.config?.seed ?? '-' }}
@@ -83,7 +87,17 @@
           </el-select>
         </el-form-item>
         <el-form-item label="时间预算(分钟)">
-          <el-slider v-model="createForm.time_budget_minutes" :min="1" :max="1440" show-input />
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <el-input-number
+              v-model="createForm.time_budget_minutes"
+              :min="0.1"
+              :max="1440"
+              :disabled="unlimitedTime"
+              :controls="false"
+              style="width: 160px"
+            />
+            <el-checkbox v-model="unlimitedTime">无限制</el-checkbox>
+          </div>
         </el-form-item>
         <el-form-item label="Preset">
           <el-select v-model="createForm.preset" style="width: 100%">
@@ -120,6 +134,7 @@ const creating = ref(false)
 let timer = null
 
 const datasetColumns = ref([])
+const unlimitedTime = ref(false)
 
 const createForm = ref({
   dataset_id: '',
@@ -169,7 +184,11 @@ const submitCreate = async () => {
 
   creating.value = true
   try {
-    const res = await runApi.create(createForm.value)
+    const payload = { ...createForm.value }
+    if (unlimitedTime.value) {
+      payload.time_budget_minutes = null
+    }
+    const res = await runApi.create(payload)
     ElMessage.success('训练任务已创建')
     showCreateDialog.value = false
     resetCreateForm()
@@ -187,9 +206,10 @@ const resetCreateForm = () => {
     target_column: '',
     task_type: 'binary_classification',
     time_budget_minutes: 10,
-    preset: 'medium_quality',
+    preset: 'auto',
     seed: null,
   }
+  unlimitedTime.value = false
   datasetColumns.value = []
 }
 

@@ -25,6 +25,8 @@ from services.preprocessing_pipeline import DataPreprocessor, save_feature_colum
 from services.sampling_service import build_sampling_strategy, apply_sampling
 from services.training_strategy import build_strategy
 from services.visualization import generate_report_plots
+from services.cv_service import cross_validate_pipeline
+from services.report_llm_service import generate_business_interpretation
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +171,7 @@ def train_model_task(
     target_column: str,
     task_type: str,
     output_dir: str,
-    time_limit: int,
+    time_limit: Optional[int],
     preset: str,
     primary_metric: Optional[str],
     seed: Optional[int] = None,
@@ -201,7 +203,8 @@ def evaluate_model_task(
     train_data: pd.DataFrame,
     target_column: str,
     output_dir: str,
-) -> Dict[str, float]:
+    cv_results: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """评估模型任务，生成测试集标准指标、扩展指标和训练集参考指标。"""
     from autogluon.tabular import TabularPredictor
 
@@ -240,12 +243,19 @@ def evaluate_model_task(
         logger.warning(f"训练集评估失败: {e}")
         metrics["train"] = {}
 
+    # 显式 CV 结果
+    if cv_results:
+        metrics["cv"] = cv_results
+
     # 保存指标到 JSON
     metrics_path = Path(output_dir) / "metrics.json"
     with open(metrics_path, "w", encoding="utf-8") as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2, default=str)
 
-    logger.info(f"模型评估完成: test={metrics['final']}, train={metrics.get('train', {})}")
+    logger.info(
+        f"模型评估完成: test={metrics['final']}, "
+        f"train={metrics.get('train', {})}, cv={metrics.get('cv', {})}"
+    )
     return metrics
 
 
@@ -458,7 +468,7 @@ def create_artifacts_task(
         f"**数据规模**: {strategy.get('data_size_label')}\n\n"
         f"**Preset**: {strategy.get('preset')}\n\n"
         f"**主指标**: {strategy.get('primary_metric')}\n\n"
-        f"**时间限制**: {strategy.get('time_limit_seconds')}s\n\n"
+        f"**时间限制**: {strategy.get('time_limit_seconds') if strategy.get('time_limit_seconds') is not None else '无限制'}\n\n"
         f"**采样策略**: {sampling_strategy.get('method')}\n\n"
         f"**决策依据**:\n{rationale}\n\n"
         f"**预处理开关**:\n```json\n{json.dumps(preprocessing, ensure_ascii=False, indent=2)}\n```"
@@ -489,6 +499,7 @@ def generate_report_task(
     task_type: str,
     seed: Optional[int] = None,
     quality: Optional[Dict[str, Any]] = None,
+    interpretation: Optional[Dict[str, Any]] = None,
 ) -> str:
     """生成 HTML 报告任务。"""
     output_path = Path(output_dir)
@@ -501,6 +512,13 @@ def generate_report_task(
                 quality = json.load(f)
     if quality is None:
         quality = {}
+
+    # 读取业务解读（若未传入则尝试本地文件）
+    if interpretation is None:
+        interpretation_path = output_path / "business_interpretation.json"
+        if interpretation_path.exists():
+            with open(interpretation_path, "r", encoding="utf-8") as f:
+                interpretation = json.load(f)
 
     # 读取指标
     metrics_path = output_path / "metrics.json"
@@ -570,6 +588,7 @@ def generate_report_task(
         plots=plots,
         quality=quality,
         metrics_full=metrics,
+        interpretation=interpretation,
     )
 
     report_path = output_path / "report.html"
@@ -580,13 +599,138 @@ def generate_report_task(
     return str(report_path)
 
 
+@task
+def fit_preprocessor_task(
+    train_df: pd.DataFrame,
+    target_column: str,
+    strategy: Dict[str, Any],
+    cleaning_rules: Optional[Dict[str, Any]] = None,
+) -> DataPreprocessor:
+    """在训练集上拟合预处理 Pipeline。"""
+    preprocessor = DataPreprocessor(
+        target_column=target_column,
+        strategy=strategy,
+        cleaning_rules=cleaning_rules,
+    )
+    preprocessor.fit(train_df)
+    logger.info(
+        f"预处理器拟合完成: 对数变换列={preprocessor.log_transform_cols}, "
+        f"最终特征数={len(preprocessor.feature_columns)}"
+    )
+    return preprocessor
+
+
+@task
+def transform_data_task(
+    preprocessor: DataPreprocessor,
+    df: pd.DataFrame,
+    dataset_label: str = "data",
+) -> pd.DataFrame:
+    """使用已拟合的预处理器转换数据。"""
+    transformed = preprocessor.transform(df)
+    logger.info(f"{dataset_label} 转换完成: {transformed.shape}")
+    return transformed
+
+
+@task
+def persist_preprocessor_task(
+    preprocessor: DataPreprocessor,
+    output_dir: str,
+) -> Dict[str, str]:
+    """保存预处理 Pipeline 与特征列清单。"""
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    pipeline_path = output_path / "preprocessing_pipeline.joblib"
+    preprocessor.save(pipeline_path)
+    save_feature_columns(output_dir, preprocessor.feature_columns)
+    feature_columns_path = output_path / "feature_columns.json"
+
+    logger.info(f"预处理器与特征列已保存: {pipeline_path}, {feature_columns_path}")
+    return {
+        "pipeline_path": str(pipeline_path),
+        "feature_columns_path": str(feature_columns_path),
+    }
+
+
+@task
+def cross_validate_task(
+    train_df: pd.DataFrame,
+    target_column: str,
+    task_type: str,
+    strategy: Dict[str, Any],
+    cleaning_rules: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """对完整预处理 + 基线模型 Pipeline 做显式交叉验证。"""
+    cv_results = cross_validate_pipeline(
+        train_df=train_df,
+        target_column=target_column,
+        task_type=task_type,
+        strategy=strategy,
+        cleaning_rules=cleaning_rules,
+        n_folds=strategy.get("validation_strategy", {}).get("n_folds", 5),
+        cv_type=strategy.get("validation_strategy", {}).get("cv_type"),
+    )
+    logger.info(
+        f"交叉验证完成: cv_type={cv_results.get('cv_type')}, "
+        f"mean={cv_results.get('cv_mean')}, std={cv_results.get('cv_std')}"
+    )
+    return cv_results
+
+
+@task
+async def generate_business_interpretation_task(
+    output_dir: str,
+    task_type: str,
+    primary_metric: Optional[str],
+    quality: Optional[Dict[str, Any]] = None,
+    strategy: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """生成 LLM 业务解读并保存到 JSON。"""
+    output_path = Path(output_dir)
+
+    # 读取测试集指标
+    metrics_path = output_path / "metrics.json"
+    metrics = {}
+    if metrics_path.exists():
+        with open(metrics_path, "r", encoding="utf-8") as f:
+            metrics = json.load(f)
+
+    # 读取特征重要性
+    importance_path = output_path / "feature_importance.csv"
+    feature_importance = []
+    if importance_path.exists():
+        importance_df = pd.read_csv(importance_path).head(10)
+        feature_importance = importance_df.to_dict(orient="records")
+
+    try:
+        interpretation = await generate_business_interpretation(
+            task_type=task_type,
+            primary_metric=primary_metric,
+            metrics=metrics,
+            feature_importance=feature_importance,
+            quality=quality,
+            strategy=strategy,
+        )
+    except Exception as e:
+        logger.warning(f"业务解读生成失败: {e}")
+        return None
+
+    interpretation_path = output_path / "business_interpretation.json"
+    with open(interpretation_path, "w", encoding="utf-8") as f:
+        json.dump(interpretation, f, ensure_ascii=False, indent=2, default=str)
+
+    logger.info(f"业务解读已保存: {interpretation_path}")
+    return interpretation
+
+
 @flow(name="automl-end-to-end", log_prints=True)
 def automl_pipeline(
     file_path: str,
     target_column: str,
     task_type: str,
     output_dir: str,
-    time_budget_minutes: float = 10.0,
+    time_budget_minutes: Optional[float] = 10.0,
     preset: Optional[str] = None,
     primary_metric: Optional[str] = None,
     seed: Optional[int] = None,
@@ -623,7 +767,7 @@ def automl_pipeline(
     strategy = build_strategy_task(
         metadata=metadata,
         task_type=task_type,
-        time_budget_minutes=max(time_budget_minutes, 0.5),
+        time_budget_minutes=time_budget_minutes,
         preset=preset,
         primary_metric=primary_metric,
         max_models=max_models,
@@ -634,17 +778,36 @@ def automl_pipeline(
     train_df_raw = split_result["train"]
     test_df_raw = split_result["test"]
 
+    # 5.5 显式交叉验证（在原始训练数据上评估完整 Pipeline，防止泄露）
+    cv_results = cross_validate_task(
+        train_df=train_df_raw,
+        target_column=target_column,
+        task_type=task_type,
+        strategy=strategy,
+        cleaning_rules=cleaning_rules,
+    )
+
     # 6. 拟合并应用预处理 Pipeline（仅在训练集上 fit，再 transform 全量数据）
-    preprocessor = DataPreprocessor(
+    preprocessor = fit_preprocessor_task(
+        train_df=train_df_raw,
         target_column=target_column,
         strategy=strategy,
         cleaning_rules=cleaning_rules,
     )
-    preprocessor.fit(train_df_raw)
-    train_df = preprocessor.transform(train_df_raw)
-    test_df = preprocessor.transform(test_df_raw)
-    preprocessor.save(Path(output_dir) / "preprocessing_pipeline.joblib")
-    save_feature_columns(output_dir, preprocessor.feature_columns)
+    train_df = transform_data_task(
+        preprocessor=preprocessor,
+        df=train_df_raw,
+        dataset_label="训练集",
+    )
+    test_df = transform_data_task(
+        preprocessor=preprocessor,
+        df=test_df_raw,
+        dataset_label="测试集",
+    )
+    persist_preprocessor_task(
+        preprocessor=preprocessor,
+        output_dir=output_dir,
+    )
     logger.info(
         f"预处理完成: 训练集 {train_df.shape}, 测试集 {test_df.shape}, "
         f"特征列={preprocessor.feature_columns}"
@@ -671,10 +834,21 @@ def automl_pipeline(
         sample_weight=sample_weight,
     )
 
-    # 9. 评估（测试集为主，训练集为参考）
-    metrics = evaluate_model_task(test_df, train_df, target_column, output_dir)
+    # 9. 评估（测试集为主，训练集为参考，附带显式 CV 结果）
+    metrics = evaluate_model_task(
+        test_df, train_df, target_column, output_dir, cv_results=cv_results
+    )
 
-    # 9. 创建 Prefect Artifact
+    # 9.5 LLM 业务解读（可选，失败不影响主流程）
+    interpretation = generate_business_interpretation_task(
+        output_dir=output_dir,
+        task_type=task_type,
+        primary_metric=strategy.get("primary_metric"),
+        quality=quality,
+        strategy=strategy,
+    )
+
+    # 10. 创建 Prefect Artifact
     create_artifacts_task(
         output_dir=output_dir,
         metadata=metadata,
@@ -683,7 +857,7 @@ def automl_pipeline(
         quality=quality,
     )
 
-    # 10. 生成 HTML 报告
+    # 11. 生成 HTML 报告
     strategy["sampling"] = sampling_strategy
     report_path = generate_report_task(
         run_id=Path(output_dir).name,
@@ -694,6 +868,7 @@ def automl_pipeline(
         task_type=task_type,
         seed=seed,
         quality=quality,
+        interpretation=interpretation,
     )
 
     return {

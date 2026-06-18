@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import sys
+import threading
 from asyncio import Semaphore
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -31,7 +32,8 @@ class TrainingJob:
     target_column: str
     task_type: str
     output_dir: Path
-    time_budget_minutes: float
+    # None 表示训练时间不限制（无穷大）
+    time_budget_minutes: float | None
     preset: str
     primary_metric: str | None
     seed: int | None
@@ -54,6 +56,27 @@ class TrainingExecutor:
         """
         self._semaphore = Semaphore(max_concurrent_jobs)
         self._jobs: dict[str, TrainingJob] = {}
+
+        # 使用独立后台事件循环运行训练任务，避免被 FastAPI/TestClient 的请求生命周期取消
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(target=self._run_loop, daemon=True)
+        self._thread.start()
+
+    def _run_loop(self) -> None:
+        """后台线程运行的独立事件循环。"""
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_forever()
+
+    def shutdown(self, timeout: float = 30.0) -> None:
+        """优雅关闭后台事件循环与线程。"""
+        if self._loop.is_closed():
+            return
+        self._loop.call_soon_threadsafe(self._loop.stop)
+        self._thread.join(timeout=timeout)
+        if self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._loop.stop)
+        if not self._loop.is_closed():
+            self._loop.close()
 
     def get_job(self, run_id: str) -> TrainingJob | None:
         """获取任务状态。"""
@@ -83,6 +106,29 @@ class TrainingExecutor:
 
         # 使用 create_task 让任务在后台运行，避免阻塞接口返回
         asyncio.create_task(self._run_with_semaphore(job))
+        return job
+
+    def submit_sync(self, **kwargs: Any) -> TrainingJob:
+        """在独立后台事件循环中提交训练任务（线程安全）。"""
+        run_id = kwargs["run_id"]
+        job = TrainingJob(
+            run_id=run_id,
+            file_path=kwargs["file_path"],
+            target_column=kwargs["target_column"],
+            task_type=kwargs["task_type"],
+            output_dir=Path(kwargs["output_dir"]),
+            time_budget_minutes=kwargs["time_budget_minutes"],
+            preset=kwargs["preset"],
+            primary_metric=kwargs.get("primary_metric"),
+            seed=kwargs.get("seed"),
+            max_models=kwargs.get("max_models", 50),
+            cleaning_rules=kwargs.get("cleaning_rules"),
+        )
+        self._jobs[run_id] = job
+
+        asyncio.run_coroutine_threadsafe(
+            self._run_with_semaphore(job), self._loop
+        )
         return job
 
     async def _run_with_semaphore(self, job: TrainingJob) -> None:
@@ -120,6 +166,14 @@ class TrainingExecutor:
             return data.get("error_message") or data.get("message")
         except (json.JSONDecodeError, OSError):
             return None
+
+    def _has_partial_model(self, output_dir: Path) -> bool:
+        """检查是否存在已保存的部分模型（用于全局超时后 Best-so-far 恢复）。"""
+        model_dir = output_dir / "autogluon_models"
+        if not model_dir.exists():
+            return False
+        # 至少包含一个模型文件/目录
+        return any(model_dir.iterdir())
 
     async def _save_metrics(self, run_id: str, output_dir: Path) -> None:
         """将 metrics.json 中的指标保存到数据库。"""
@@ -172,7 +226,8 @@ class TrainingExecutor:
             "--output-dir",
             str(job.output_dir),
             "--time-budget-minutes",
-            str(job.time_budget_minutes),
+            # None 用 -1 作为哨兵传给脚本，脚本内再转回 None
+            str(job.time_budget_minutes if job.time_budget_minutes is not None else -1),
             "--preset",
             job.preset,
         ]
@@ -186,6 +241,8 @@ class TrainingExecutor:
 
         env = os.environ.copy()
         env["PREFECT_API_URL"] = ""
+        # 强制子进程 stdout/stderr 使用 UTF-8，避免 Windows 重定向时写入 cp936 导致日志解码失败
+        env["PYTHONIOENCODING"] = "utf-8"
 
         try:
             log_file = log_path.open("w", encoding="utf-8")
@@ -199,9 +256,14 @@ class TrainingExecutor:
                 env=env,
             )
 
-            # 等待子进程结束，设置超时为预算时间 + 5 分钟缓冲
-            timeout = job.time_budget_minutes * 60 + 300
-            returncode = await asyncio.wait_for(job.process.wait(), timeout=timeout)
+            # 等待子进程结束，设置超时为预算时间 + 1 分钟缓冲
+            # AutoGluon 内部已有 time_limit，这里只是防止子进程僵死的最后保险
+            # 当 time_budget_minutes 为 None 时不设置超时（无穷大）
+            if job.time_budget_minutes is None:
+                returncode = await job.process.wait()
+            else:
+                timeout = job.time_budget_minutes * 60 + 60
+                returncode = await asyncio.wait_for(job.process.wait(), timeout=timeout)
 
             if returncode != 0:
                 error_message = (
@@ -225,11 +287,25 @@ class TrainingExecutor:
             if job.process is not None and job.process.returncode is None:
                 job.process.kill()
                 await job.process.wait()
-            with log_path.open("a", encoding="utf-8") as f:
-                f.write(f"\n[{datetime.now(UTC).isoformat()}] ERROR: 训练超时\n")
-            await self._update_run(job.run_id, "failed", "训练超时", set_completed=True)
-            job.status = "failed"
-            job.error_message = "训练超时"
+
+            # 全局超时后尝试 Best-so-far 恢复：若 AutoGluon 已保存部分模型，则视为完成
+            if self._has_partial_model(job.output_dir):
+                warning = (
+                    "训练在全局超时时完成，已返回 AutoGluon 当前最优模型。"
+                    "部分产物（如报告、扩展指标）可能不完整。"
+                )
+                with log_path.open("a", encoding="utf-8") as f:
+                    f.write(f"\n[{datetime.now(UTC).isoformat()}] {warning}\n")
+                await self._save_metrics(job.run_id, job.output_dir)
+                await self._update_run(job.run_id, "completed", warning, set_completed=True)
+                job.status = "completed"
+                job.error_message = warning
+            else:
+                with log_path.open("a", encoding="utf-8") as f:
+                    f.write(f"\n[{datetime.now(UTC).isoformat()}] ERROR: 训练超时，且未找到可用模型\n")
+                await self._update_run(job.run_id, "failed", "训练超时，且未找到可用模型", set_completed=True)
+                job.status = "failed"
+                job.error_message = "训练超时，且未找到可用模型"
 
         except Exception as e:
             if job.process is not None and job.process.returncode is None:

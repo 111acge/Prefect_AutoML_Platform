@@ -45,8 +45,12 @@ def _load_sqlite(connection_params: Dict[str, Any], query: str) -> pd.DataFrame:
     from sqlalchemy import create_engine
 
     engine = create_engine(f"sqlite:///{file_path}")
-    with engine.connect() as conn:
-        return pd.read_sql(query, conn)
+    try:
+        with engine.connect() as conn:
+            df = pd.read_sql(query, conn)
+        return df
+    finally:
+        engine.dispose()
 
 
 def _load_with_sqlalchemy(
@@ -82,8 +86,12 @@ def _load_with_sqlalchemy(
 
     url = f"{dialect}://{username}:{password}@{host}:{port}/{database}"
     engine = create_engine(url)
-    with engine.connect() as conn:
-        return pd.read_sql(query, conn)
+    try:
+        with engine.connect() as conn:
+            df = pd.read_sql(query, conn)
+        return df
+    finally:
+        engine.dispose()
 
 
 def _load_clickhouse(connection_params: Dict[str, Any], query: str) -> pd.DataFrame:

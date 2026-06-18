@@ -150,7 +150,7 @@ async def create_run(
         cleaning_rules = (dataset.schema_info or {}).get("cleaning_rules")
 
         # 提交到异步训练执行器，避免阻塞 FastAPI worker
-        await training_executor.submit(
+        training_executor.submit_sync(
             run_id=run.id,
             file_path=dataset.file_path,
             target_column=request.target_column,
@@ -252,6 +252,7 @@ async def get_run_results(run_id: str, db: AsyncSession = Depends(get_db)):
         metrics = {}
         extended_metrics = None
         train_metrics = None
+        cv_results = None
         metrics_path = output_dir / "metrics.json"
         if metrics_path.exists():
             with open(metrics_path, "r", encoding="utf-8") as f:
@@ -266,6 +267,17 @@ async def get_run_results(run_id: str, db: AsyncSession = Depends(get_db)):
                     for k, v in metrics_data.get("train", {}).items()
                     if isinstance(v, (int, float))
                 }
+                cv_results = metrics_data.get("cv")
+
+        # 读取详细错误信息
+        error_details = None
+        error_path = output_dir / "error.json"
+        if error_path.exists():
+            try:
+                with open(error_path, "r", encoding="utf-8") as f:
+                    error_details = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass
 
         # 读取排行榜
         leaderboard = []
@@ -287,9 +299,11 @@ async def get_run_results(run_id: str, db: AsyncSession = Depends(get_db)):
             run_id=run_id,
             status=run.status,
             error_message=run.error_message,
+            error_details=error_details,
             metrics=metrics,
             extended_metrics=extended_metrics,
             train_metrics=train_metrics if train_metrics else None,
+            cv_results=cv_results,
             leaderboard=leaderboard,
             feature_importance=feature_importance,
             model_path=(
@@ -589,7 +603,7 @@ async def get_run_logs(run_id: str, db: AsyncSession = Depends(get_db)):
     if not log_path.exists():
         return PlainTextResponse("日志尚未生成\n")
 
-    with open(log_path, "r", encoding="utf-8") as f:
+    with open(log_path, "r", encoding="utf-8", errors="replace") as f:
         content = f.read()
     return PlainTextResponse(content)
 

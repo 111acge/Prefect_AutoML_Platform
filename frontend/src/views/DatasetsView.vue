@@ -84,7 +84,17 @@
           </el-select>
         </el-form-item>
         <el-form-item label="时间预算(分钟)">
-          <el-slider v-model="trainForm.time_budget_minutes" :min="1" :max="1440" show-input />
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <el-input-number
+              v-model="trainForm.time_budget_minutes"
+              :min="0.1"
+              :max="1440"
+              :disabled="trainUnlimitedTime"
+              :controls="false"
+              style="width: 160px"
+            />
+            <el-checkbox v-model="trainUnlimitedTime">无限制</el-checkbox>
+          </div>
         </el-form-item>
         <el-form-item label="Preset">
           <el-select v-model="trainForm.preset" style="width: 100%">
@@ -244,6 +254,7 @@ const trainForm = ref({
   preset: 'auto',
   seed: null,
 })
+const trainUnlimitedTime = ref(false)
 
 const resetTrainForm = () => {
   trainForm.value = {
@@ -251,9 +262,10 @@ const resetTrainForm = () => {
     target_column: '',
     task_type: 'binary_classification',
     time_budget_minutes: 10,
-    preset: 'medium_quality',
+    preset: 'auto',
     seed: null,
   }
+  trainUnlimitedTime.value = false
 }
 
 const fetchDatasets = async () => {
@@ -406,10 +418,14 @@ const submitTrain = async () => {
 
   training.value = true
   try {
-    const res = await runApi.create({
+    const payload = {
       dataset_id: currentDataset.value.id,
       ...trainForm.value,
-    })
+    }
+    if (trainUnlimitedTime.value) {
+      payload.time_budget_minutes = null
+    }
+    const res = await runApi.create(payload)
     ElMessage.success('训练任务已启动')
     showTrainDialog.value = false
     resetTrainForm()

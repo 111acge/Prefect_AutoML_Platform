@@ -11,6 +11,14 @@ import pytest
 from services.llm_intent_service import parse_intent, IntentConfig
 
 
+# 当 openai SDK 未安装时，跳过需要模拟 LLM 调用的测试
+try:
+    import openai  # noqa: F401
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+
+
 def _make_sample_df() -> pd.DataFrame:
     return pd.DataFrame({
         "age": [25, 30, 35, 40, 45],
@@ -57,6 +65,7 @@ async def test_rule_based_infers_time_budget_and_max_models():
     assert result.max_models == 10
 
 
+@pytest.mark.skipif(not OPENAI_AVAILABLE, reason="openai SDK not installed")
 @pytest.mark.asyncio
 async def test_llm_parse_success(monkeypatch):
     async def _fake_call(provider, messages):
@@ -82,6 +91,7 @@ async def test_llm_parse_success(monkeypatch):
     assert result.max_models == 8
 
 
+@pytest.mark.skipif(not OPENAI_AVAILABLE, reason="openai SDK not installed")
 @pytest.mark.asyncio
 async def test_llm_parse_invalid_json_fallback_to_rule(monkeypatch):
     async def _fake_call(provider, messages):
@@ -99,6 +109,7 @@ async def test_llm_parse_invalid_json_fallback_to_rule(monkeypatch):
     assert result.target_column == "defaulted"
 
 
+@pytest.mark.skipif(not OPENAI_AVAILABLE, reason="openai SDK not installed")
 @pytest.mark.asyncio
 async def test_llm_parse_missing_fields_filled_by_rule(monkeypatch):
     async def _fake_call(provider, messages):

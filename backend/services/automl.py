@@ -41,7 +41,7 @@ class AutoMLService:
         train_data: pd.DataFrame,
         target_column: str,
         task_type: str,
-        time_limit: int,
+        time_limit: Optional[int],
         preset: str = "medium_quality",
         primary_metric: Optional[str] = None,
         seed: Optional[int] = None,

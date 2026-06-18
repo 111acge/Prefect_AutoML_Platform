@@ -14,13 +14,16 @@
         <el-descriptions-item label="任务ID">{{ run.id }}</el-descriptions-item>
         <el-descriptions-item label="数据集ID">{{ run.dataset_id }}</el-descriptions-item>
         <el-descriptions-item label="状态">{{ run.status }}</el-descriptions-item>
-        <el-descriptions-item label="时间预算">{{ run.time_budget_minutes }} 分钟</el-descriptions-item>
+        <el-descriptions-item label="时间预算">{{ run.time_budget_minutes ?? '无限制' }}</el-descriptions-item>
         <el-descriptions-item label="随机种子">{{ run.config?.seed ?? '-' }}</el-descriptions-item>
         <el-descriptions-item label="评估指标">{{ run.primary_metric || '-' }}</el-descriptions-item>
         <el-descriptions-item label="创建时间">{{ formatDate(run.created_at) }}</el-descriptions-item>
         <el-descriptions-item label="完成时间">{{ formatDate(run.completed_at) || '-' }}</el-descriptions-item>
         <el-descriptions-item label="错误信息" v-if="run.error_message">
           <span style="color: #f56c6c;">{{ run.error_message }}</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="错误类型" v-if="results?.error_details?.error_type">
+          <span style="color: #f56c6c;">{{ results.error_details.error_type }}</span>
         </el-descriptions-item>
       </el-descriptions>
     </el-card>
@@ -50,6 +53,42 @@
             </div>
           </el-col>
         </el-row>
+      </template>
+
+      <template v-if="results.cv_results && results.cv_results.cv_scores">
+        <h3>交叉验证（完整 Pipeline）</h3>
+        <el-row :gutter="20" class="metric-row">
+          <el-col :span="6">
+            <div class="metric-item">
+              <div class="metric-label">CV 类型</div>
+              <div class="metric-value">{{ results.cv_results.cv_type }}</div>
+            </div>
+          </el-col>
+          <el-col :span="6">
+            <div class="metric-item">
+              <div class="metric-label">折数</div>
+              <div class="metric-value">{{ results.cv_results.n_folds }}</div>
+            </div>
+          </el-col>
+          <el-col :span="6">
+            <div class="metric-item">
+              <div class="metric-label">CV 均值</div>
+              <div class="metric-value">{{ results.cv_results.cv_mean?.toFixed(4) }}</div>
+            </div>
+          </el-col>
+          <el-col :span="6">
+            <div class="metric-item">
+              <div class="metric-label">CV 标准差</div>
+              <div class="metric-value">{{ results.cv_results.cv_std?.toFixed(4) }}</div>
+            </div>
+          </el-col>
+        </el-row>
+        <el-alert
+          v-if="results.cv_results.cv_error"
+          :title="'CV 计算失败: ' + results.cv_results.cv_error"
+          type="warning"
+          :closable="false"
+        />
       </template>
 
       <template v-if="results.extended_metrics && extendedMetricItems.length > 0">
@@ -118,6 +157,16 @@
       <template v-if="results.report_path">
         <h3>报告预览</h3>
         <iframe :src="`/api/runs/${runId}/report`" class="report-iframe"></iframe>
+      </template>
+
+      <template v-if="results?.error_details?.traceback">
+        <h3>错误堆栈</h3>
+        <el-input
+          v-model="results.error_details.traceback"
+          type="textarea"
+          :rows="10"
+          readonly
+        />
       </template>
 
       <h3>训练日志</h3>

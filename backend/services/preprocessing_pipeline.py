@@ -36,7 +36,7 @@ class DataPreprocessor(BaseEstimator, TransformerMixin):
     ):
         self.target_column = target_column
         self.strategy = strategy or {}
-        self.cleaning_rules = cleaning_rules or {}
+        self.cleaning_rules = cleaning_rules
         self.numeric_fill_values: Dict[str, float] = {}
         self.categorical_fill_values: Dict[str, str] = {}
         self.log_transform_cols: List[str] = []
@@ -47,7 +47,7 @@ class DataPreprocessor(BaseEstimator, TransformerMixin):
     def _apply_cleaning_rules(self, df: pd.DataFrame) -> pd.DataFrame:
         """应用清洗规则（不含填充/对数变换）。"""
         df = df.copy()
-        rules = self.cleaning_rules
+        rules = self.cleaning_rules or {}
 
         # 删除重复行
         if rules.get("remove_duplicates", True):
@@ -124,7 +124,7 @@ class DataPreprocessor(BaseEstimator, TransformerMixin):
             categorical_cols.remove(self.target_column)
 
         # 数值填充
-        rules = self.cleaning_rules
+        rules = self.cleaning_rules or {}
         numeric_strategy = rules.get("numeric_impute_strategy", "median")
         numeric_constant = rules.get("numeric_impute_constant", 0.0)
         self.numeric_fill_values = {}

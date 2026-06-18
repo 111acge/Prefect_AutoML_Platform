@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
 from routers import datasets, runs, intent
 from services.seed_data import ensure_default_dataset
+from services.training_executor import training_executor
 
 # 配置日志
 logging.basicConfig(
@@ -29,7 +30,8 @@ async def lifespan(app: FastAPI):
     # 加载默认数据集
     await ensure_default_dataset()
     yield
-    # 关闭时可清理资源
+    # 关闭时停止训练执行器后台循环
+    training_executor.shutdown()
 
 
 app = FastAPI(

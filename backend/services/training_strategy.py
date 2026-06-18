@@ -15,7 +15,8 @@ class TrainingStrategy:
 
     data_size_label: str  # small / medium / large
     preset: str
-    time_limit_seconds: int
+    # None 表示不限制训练时间（无穷大）
+    time_limit_seconds: Optional[int]
     max_models: int
     auto_stack: bool
     num_bag_folds: int
@@ -34,7 +35,7 @@ class TrainingStrategy:
 def build_strategy(
     metadata: Dict[str, Any],
     task_type: str,
-    user_time_budget_minutes: float = 10.0,
+    user_time_budget_minutes: Optional[float] = 10.0,
     user_preset: Optional[str] = None,
     user_primary_metric: Optional[str] = None,
     user_max_models: Optional[int] = None,
@@ -85,17 +86,22 @@ def build_strategy(
             rationale.append("中等规模数据使用 best_quality")
 
     # 3. 时间预算（秒）
-    user_time_seconds = max(user_time_budget_minutes, 0.5) * 60
-    if data_size_label == "small":
-        # 小数据集不需要太长，但保证 AutoGluon 能完成基础训练
-        time_limit_seconds = int(min(user_time_seconds, max(60, user_time_seconds)))
-    elif data_size_label == "medium":
-        time_limit_seconds = int(min(user_time_seconds, max(120, user_time_seconds)))
+    if user_time_budget_minutes is None:
+        # None 表示不限制训练时间（无穷大）
+        time_limit_seconds = None
+        rationale.append("训练时间: 无限制")
     else:
-        time_limit_seconds = int(user_time_seconds)
-    # 至少给 30 秒，避免 fit 失败
-    time_limit_seconds = max(time_limit_seconds, 30)
-    rationale.append(f"训练时间限制: {time_limit_seconds}s")
+        user_time_seconds = max(user_time_budget_minutes, 0.5) * 60
+        if data_size_label == "small":
+            # 小数据集不需要太长，但保证 AutoGluon 能完成基础训练
+            time_limit_seconds = int(min(user_time_seconds, max(60, user_time_seconds)))
+        elif data_size_label == "medium":
+            time_limit_seconds = int(min(user_time_seconds, max(120, user_time_seconds)))
+        else:
+            time_limit_seconds = int(user_time_seconds)
+        # 至少给 30 秒，避免 fit 失败
+        time_limit_seconds = max(time_limit_seconds, 30)
+        rationale.append(f"训练时间限制: {time_limit_seconds}s")
 
     # 4. 模型复杂度（stacking / bagging）
     if user_max_models is not None:
@@ -155,10 +161,17 @@ def build_strategy(
             validation_strategy["holdout_frac"] = 0.15
         else:
             validation_strategy["holdout_frac"] = 0.1
-    rationale.append(
-        f"验证策略: {validation_strategy['name']} "
-        f"(holdout_frac={validation_strategy.get('holdout_frac', '-')})"
-    )
+    if validation_strategy["name"] == "cv":
+        rationale.append(
+            f"验证策略: {validation_strategy['name']} "
+            f"(cv_type={validation_strategy.get('cv_type')}, "
+            f"n_folds={validation_strategy.get('n_folds')})"
+        )
+    else:
+        rationale.append(
+            f"验证策略: {validation_strategy['name']} "
+            f"(holdout_frac={validation_strategy.get('holdout_frac', '-')})"
+        )
 
     # 8. 预处理策略
     missing_rate_values = list(missing_rates.values()) if missing_rates else []
@@ -262,8 +275,10 @@ def _auto_validation_strategy(
         if task_type in ("binary_classification", "multiclass_classification"):
             n_folds = min(5, int(min_class_count))
             n_folds = max(2, n_folds)
+            cv_type = "stratified"
         else:
             n_folds = 5
-        return {"name": "cv", "n_folds": n_folds}
+            cv_type = "kfold"
+        return {"name": "cv", "n_folds": n_folds, "cv_type": cv_type}
 
     return {"name": "holdout", "test_size": 0.2}

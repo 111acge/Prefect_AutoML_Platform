@@ -108,6 +108,61 @@
         <p>端到端全自动机器学习训练报告</p>
     </div>
 
+    {% if interpretation %}
+    <div class="card">
+        <h2>业务解读</h2>
+        <p><strong>摘要：</strong>{{ interpretation.business_summary }}</p>
+
+        {% if interpretation.key_insights %}
+        <h3>关键发现</h3>
+        <ul>
+            {% for insight in interpretation.key_insights %}
+            <li>{{ insight }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+
+        {% if interpretation.feature_interpretations %}
+        <h3>特征业务含义</h3>
+        <table>
+            <thead>
+                <tr><th>特征</th><th>业务含义</th></tr>
+            </thead>
+            <tbody>
+                {% for item in interpretation.feature_interpretations %}
+                <tr>
+                    <td>{{ item.feature }}</td>
+                    <td>{{ item.interpretation }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        {% if interpretation.caveats %}
+        <h3>使用限制</h3>
+        <ul>
+            {% for caveat in interpretation.caveats %}
+            <li>{{ caveat }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+
+        {% if interpretation.recommendations %}
+        <h3>下一步建议</h3>
+        <ul>
+            {% for rec in interpretation.recommendations %}
+            <li>{{ rec }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+
+        <p style="text-align: right; color: #999; font-size: 12px;">
+            解读来源: {{ interpretation.provider or 'unknown' }}
+        </p>
+    </div>
+    {% endif %}
+
     <div class="card">
         <h2>任务概览</h2>
         <div class="info-row">
@@ -230,7 +285,7 @@
             </div>
             <div class="info-item">
                 <div class="info-label">时间限制</div>
-                <div class="info-value">{{ strategy.time_limit_seconds }} s</div>
+                <div class="info-value">{{ strategy.time_limit_seconds if strategy.time_limit_seconds is not none else '无限制' }}</div>
             </div>
             <div class="info-item">
                 <div class="info-label">最大模型数</div>
@@ -303,13 +358,54 @@
         <h2>评估指标</h2>
         <div class="metric-grid">
             {% for name, value in metrics.items() %}
+            {% if name not in ['extended', 'train', 'cv', 'threshold', 'ensemble_validation'] %}
             <div class="metric-card">
                 <div class="metric-name">{{ name }}</div>
                 <div class="metric-value">{{ "%.4f"|format(value) }}</div>
             </div>
+            {% endif %}
             {% endfor %}
         </div>
     </div>
+
+    {% if metrics_full.cv and metrics_full.cv.cv_scores %}
+    <div class="card">
+        <h2>交叉验证（完整 Pipeline）</h2>
+        <div class="metric-grid">
+            <div class="metric-card">
+                <div class="metric-name">CV 类型</div>
+                <div class="metric-value">{{ metrics_full.cv.cv_type }}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-name">折数</div>
+                <div class="metric-value">{{ metrics_full.cv.n_folds }}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-name">CV 均值</div>
+                <div class="metric-value">{{ "%.4f"|format(metrics_full.cv.cv_mean) }}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-name">CV 标准差</div>
+                <div class="metric-value">{{ "%.4f"|format(metrics_full.cv.cv_std) }}</div>
+            </div>
+        </div>
+        {% if metrics_full.cv.cv_scores %}
+        <table>
+            <thead>
+                <tr><th>折</th><th>分数</th></tr>
+            </thead>
+            <tbody>
+                {% for score in metrics_full.cv.cv_scores %}
+                <tr><td>第 {{ loop.index }} 折</td><td>{{ "%.4f"|format(score) }}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+        {% if metrics_full.cv.cv_error %}
+        <p style="color: #f56c6c;">CV 计算失败: {{ metrics_full.cv.cv_error }}</p>
+        {% endif %}
+    </div>
+    {% endif %}
 
     {% if metrics_full and (metrics_full.threshold or metrics_full.ensemble_validation) %}
     <div class="card">

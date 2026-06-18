@@ -56,7 +56,9 @@ def main():
             target_column=args.target_column,
             task_type=args.task_type,
             output_dir=args.output_dir,
-            time_budget_minutes=args.time_budget_minutes,
+            time_budget_minutes=(
+                None if args.time_budget_minutes == -1 else args.time_budget_minutes
+            ),
             preset=args.preset,
             primary_metric=args.primary_metric,
             seed=args.seed,

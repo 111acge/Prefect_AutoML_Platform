@@ -80,7 +80,8 @@ class RunCreate(BaseModel):
         ..., pattern="^(binary_classification|multiclass_classification|regression)$"
     )
     primary_metric: Optional[str] = None
-    time_budget_minutes: float = Field(default=10, ge=0.1, le=1440)
+    # None 表示不限制训练时间（无穷大）
+    time_budget_minutes: Optional[float] = Field(default=10, ge=0.1)
     max_models: int = Field(default=50, ge=1, le=200)
     preset: Optional[str] = Field(default="auto")
     seed: Optional[int] = Field(default=None, ge=0)
@@ -92,7 +93,7 @@ class RunResponse(BaseModel):
     id: str
     dataset_id: str
     status: str
-    time_budget_minutes: float
+    time_budget_minutes: Optional[float]
     primary_metric: Optional[str]
     output_dir: str
     prefect_flow_run_id: Optional[str]
@@ -110,9 +111,11 @@ class RunResult(BaseModel):
     run_id: str
     status: str
     error_message: Optional[str] = None
+    error_details: Optional[Dict[str, Any]] = None
     metrics: Dict[str, float]
     extended_metrics: Optional[Dict[str, Any]] = None
     train_metrics: Optional[Dict[str, float]] = None
+    cv_results: Optional[Dict[str, Any]] = None
     leaderboard: List[Dict[str, Any]]
     feature_importance: List[Dict[str, Any]]
     model_path: Optional[str]

@@ -84,7 +84,8 @@ class IntentConfig(BaseModel):
     target_column: Optional[str] = None
     task_type: Optional[str] = None
     primary_metric: Optional[str] = None
-    time_budget_minutes: Optional[float] = Field(default=None, ge=0.1, le=180)
+    # None 表示不限制训练时间（无穷大）
+    time_budget_minutes: Optional[float] = Field(default=None, ge=0.1)
     max_models: Optional[int] = Field(default=None, ge=1, le=200)
     preset: Optional[str] = "auto"
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -331,7 +332,7 @@ def _build_messages(query: str, df_sample: Optional[pd.DataFrame]) -> List[Dict[
         "- task_type: 任务类型，只能是 binary_classification / multiclass_classification / regression\n"
         "- primary_metric: 主要评估指标，可选值包括 accuracy, f1, f1_macro, f1_micro, precision, recall, "
         "roc_auc, log_loss, mcc, root_mean_squared_error, mean_squared_error, mean_absolute_error, r2, auc_pr\n"
-        "- time_budget_minutes: 训练时间预算（分钟，0.1-180 之间的数字）\n"
+        "- time_budget_minutes: 训练时间预算（分钟，0.1-180 之间的数字；null 表示不限制）\n"
         "- max_models: 最多尝试模型数（1-200 之间的整数）\n"
         "- preset: AutoGluon preset，可选 auto / best_quality / high_quality / good_quality / medium_quality / fast_training\n"
         "- confidence: 你对解析结果的置信度（0.0-1.0）\n"
