@@ -138,6 +138,14 @@ class AutoMLService:
                 if holdout_frac is not None:
                     fit_kwargs["holdout_frac"] = holdout_frac
 
+        # 如果存在上次训练残留的模型目录（如重试、超时 kill 导致部分保存），先清理，
+        # 否则 AutoGluon 会复用已 fit 的 learner，触发 "Learner is already fit."
+        if self.model_dir.exists():
+            import shutil
+
+            shutil.rmtree(self.model_dir, ignore_errors=True)
+            logger.info(f"清理已存在的模型目录: {self.model_dir}")
+
         # 训练模型
         predictor_kwargs = {
             "label": target_column,
