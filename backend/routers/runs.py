@@ -241,6 +241,99 @@ async def list_runs(db: AsyncSession = Depends(get_db)):
     return runs
 
 
+@router.post("/compare", response_model=RunCompareResponse)
+async def compare_runs(request: RunCompareRequest, db: AsyncSession = Depends(get_db)):
+    """对比多个已完成的训练任务。"""
+    result = await db.execute(select(Run).where(Run.id.in_(request.run_ids)))
+    runs = result.scalars().all()
+    run_map = {run.id: run for run in runs}
+
+    missing = [rid for rid in request.run_ids if rid not in run_map]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {', '.join(missing)}")
+
+    not_completed = [rid for rid in request.run_ids if run_map[rid].status != "completed"]
+    if not_completed:
+        raise HTTPException(status_code=400, detail=f"以下任务尚未完成: {', '.join(not_completed)}")
+
+    items: List[RunCompareItem] = []
+    metric_name = None
+    for rid in request.run_ids:
+        run = run_map[rid]
+        output_dir = Path(run.output_dir)
+
+        metrics: Dict[str, float] = {}
+        metrics_path = output_dir / "metrics.json"
+        if metrics_path.exists():
+            try:
+                with open(metrics_path, "r", encoding="utf-8") as f:
+                    metrics_data = json.load(f)
+                metrics = {
+                    str(k): float(v) for k, v in metrics_data.get("final", {}).items()
+                    if isinstance(v, (int, float))
+                }
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        best_model = None
+        best_score = None
+        leaderboard_path = output_dir / "leaderboard.csv"
+        if leaderboard_path.exists():
+            try:
+                import pandas as pd
+                lb = pd.read_csv(leaderboard_path)
+                if not lb.empty:
+                    best_row = lb.iloc[0]
+                    best_model = str(best_row.get("model"))
+                    best_score = (
+                        float(best_row.get("score_val"))
+                        if pd.notna(best_row.get("score_val"))
+                        else None
+                    )
+            except Exception:
+                pass
+
+        feature_count = None
+        feature_columns_path = output_dir / "feature_columns.json"
+        if feature_columns_path.exists():
+            try:
+                with open(feature_columns_path, "r", encoding="utf-8") as f:
+                    feature_count = len(json.load(f))
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        snapshot = (run.config or {}).get("snapshot", {})
+        dataset_name = snapshot.get("dataset_name") or run.dataset_id
+
+        if metric_name is None and run.primary_metric:
+            metric_name = run.primary_metric
+
+        items.append(
+            RunCompareItem(
+                run_id=rid,
+                dataset_name=dataset_name,
+                status=run.status,
+                primary_metric=run.primary_metric,
+                metrics=metrics,
+                best_model=best_model,
+                best_model_score=best_score,
+                feature_count=feature_count,
+            )
+        )
+
+    best_run_id = None
+    if metric_name:
+        scored = [
+            (item.run_id, item.metrics.get(metric_name))
+            for item in items
+            if item.metrics.get(metric_name) is not None
+        ]
+        if scored:
+            best_run_id = max(scored, key=lambda x: x[1])[0]
+
+    return RunCompareResponse(runs=items, metric_name=metric_name, best_run_id=best_run_id)
+
+
 @router.get("/{run_id}", response_model=RunResponse)
 async def get_run(run_id: str, db: AsyncSession = Depends(get_db)):
     """获取任务详情。"""
@@ -388,100 +481,6 @@ async def get_run_results(run_id: str, db: AsyncSession = Depends(get_db)):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/compare", response_model=RunCompareResponse)
-async def compare_runs(request: RunCompareRequest, db: AsyncSession = Depends(get_db)):
-    """对比多个已完成的训练任务。"""
-    result = await db.execute(select(Run).where(Run.id.in_(request.run_ids)))
-    runs = result.scalars().all()
-    run_map = {run.id: run for run in runs}
-
-    missing = [rid for rid in request.run_ids if rid not in run_map]
-    if missing:
-        raise HTTPException(status_code=404, detail=f"任务不存在: {', '.join(missing)}")
-
-    not_completed = [rid for rid in request.run_ids if run_map[rid].status != "completed"]
-    if not_completed:
-        raise HTTPException(status_code=400, detail=f"以下任务尚未完成: {', '.join(not_completed)}")
-
-    items: List[RunCompareItem] = []
-    metric_name = None
-    for rid in request.run_ids:
-        run = run_map[rid]
-        output_dir = Path(run.output_dir)
-
-        metrics: Dict[str, float] = {}
-        metrics_path = output_dir / "metrics.json"
-        if metrics_path.exists():
-            try:
-                with open(metrics_path, "r", encoding="utf-8") as f:
-                    metrics_data = json.load(f)
-                metrics = {
-                    str(k): float(v) for k, v in metrics_data.get("final", {}).items()
-                    if isinstance(v, (int, float))
-                }
-            except (json.JSONDecodeError, OSError):
-                pass
-
-        best_model = None
-        best_score = None
-        leaderboard_path = output_dir / "leaderboard.csv"
-        if leaderboard_path.exists():
-            try:
-                import pandas as pd
-                lb = pd.read_csv(leaderboard_path)
-                if not lb.empty:
-                    best_row = lb.iloc[0]
-                    best_model = str(best_row.get("model"))
-                    best_score = (
-                        float(best_row.get("score_val"))
-                        if pd.notna(best_row.get("score_val"))
-                        else None
-                    )
-            except Exception:
-                pass
-
-        feature_count = None
-        feature_columns_path = output_dir / "feature_columns.json"
-        if feature_columns_path.exists():
-            try:
-                with open(feature_columns_path, "r", encoding="utf-8") as f:
-                    feature_count = len(json.load(f))
-            except (json.JSONDecodeError, OSError):
-                pass
-
-        snapshot = (run.config or {}).get("snapshot", {})
-        dataset_name = snapshot.get("dataset_name") or run.dataset_id
-
-        if metric_name is None and run.primary_metric:
-            metric_name = run.primary_metric
-
-        items.append(
-            RunCompareItem(
-                run_id=rid,
-                dataset_name=dataset_name,
-                status=run.status,
-                primary_metric=run.primary_metric,
-                metrics=metrics,
-                best_model=best_model,
-                best_model_score=best_score,
-                feature_count=feature_count,
-            )
-        )
-
-    # 根据 metric_name 排序选出最佳 run；没有统一指标时不指定
-    best_run_id = None
-    if metric_name:
-        scored = [
-            (item.run_id, item.metrics.get(metric_name))
-            for item in items
-            if item.metrics.get(metric_name) is not None
-        ]
-        if scored:
-            best_run_id = max(scored, key=lambda x: x[1])[0]
-
-    return RunCompareResponse(runs=items, metric_name=metric_name, best_run_id=best_run_id)
 
 
 @router.post("/{run_id}/predict", response_model=PredictionResponse)
