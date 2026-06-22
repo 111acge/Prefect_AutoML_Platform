@@ -34,6 +34,23 @@ def test_group_gets_group_kfold():
     assert splitter.__class__.__name__ == "GroupKFold"
 
 
+def test_min_class_count_one_falls_back_to_kfold():
+    """最小类只有 1 个样本时，StratifiedKFold 会崩溃，应回退到 KFold。"""
+    splitter = get_cv_splitter(
+        "binary_classification", 100, n_folds=5, min_class_count=1
+    )
+    assert splitter.__class__.__name__ == "KFold"
+
+
+def test_n_folds_capped_by_min_class_count():
+    """StratifiedKFold 的折数不能超过最小类样本数。"""
+    splitter = get_cv_splitter(
+        "binary_classification", 100, n_folds=10, min_class_count=3
+    )
+    assert splitter.__class__.__name__ == "StratifiedKFold"
+    assert splitter.n_splits == 3
+
+
 def test_cross_validate_binary_classification():
     df = pd.DataFrame({
         "a": np.random.randn(100),

@@ -8,6 +8,10 @@
 from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional
 
+from config import (
+    HIGH_CARDINALITY_CLASS_THRESHOLD,
+)
+
 
 @dataclass
 class TrainingStrategy:
@@ -26,6 +30,8 @@ class TrainingStrategy:
     sample_weight_strategy: str
     validation_strategy: Dict[str, Any]
     preprocessing: Dict[str, Any]
+    # 可选：显式指定模型搜索空间，用于大数据/高基数场景排除风险模型
+    hyperparameters: Optional[Dict[str, Any]] = None
     rationale: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -59,6 +65,7 @@ def build_strategy(
     target_info = metadata.get("target_info") or {}
     field_types = metadata.get("field_types", {})
     missing_rates = metadata.get("missing_rates", {})
+    high_cardinality_columns = metadata.get("high_cardinality_columns", [])
 
     rationale: List[str] = []
 
@@ -124,11 +131,12 @@ def build_strategy(
         num_bag_folds = 3
         num_stack_levels = 1
         rationale.append("小数据集启用轻量 stacking/bagging")
-    elif data_size_label == "large" and max_models >= 30:
-        auto_stack = True
-        num_bag_folds = 3
-        num_stack_levels = 1
-        rationale.append("大数据集启用轻量 stacking")
+    elif data_size_label == "large":
+        # 大数据集禁用 stacking/bagging，避免 CatBoost/LightGBM 大模型 OOM 与卡死
+        auto_stack = False
+        num_bag_folds = 0
+        num_stack_levels = 0
+        rationale.append("大数据集禁用 stacking/bagging，降低内存风险")
     else:
         auto_stack = False
         num_bag_folds = 0
@@ -176,7 +184,22 @@ def build_strategy(
             f"(holdout_frac={validation_strategy.get('holdout_frac', '-')})"
         )
 
-    # 8. 预处理策略
+    # 8. 模型搜索空间（大数据/高基数/高类别数场景规避风险模型）
+    n_classes = int(target_info.get("unique_values", 0)) if task_type == "multiclass_classification" else 0
+    hyperparameters = _select_hyperparameters(
+        data_size_label=data_size_label,
+        n_samples=n_samples,
+        memory_mb=memory_mb,
+        high_cardinality_columns=high_cardinality_columns,
+        n_classes=n_classes,
+    )
+    if hyperparameters is not None:
+        reason = "高基数列" if high_cardinality_columns else "高类别数" if n_classes > HIGH_CARDINALITY_CLASS_THRESHOLD else "大数据"
+        rationale.append(
+            f"模型空间: {list(hyperparameters.keys())} ({reason} 限制)"
+        )
+
+    # 9. 预处理策略
     missing_rate_values = list(missing_rates.values()) if missing_rates else []
     high_missing = any(r > 0.3 for r in missing_rate_values)
     has_datetime = any(t == "datetime" for t in field_types.values())
@@ -230,8 +253,58 @@ def build_strategy(
         sample_weight_strategy=sample_weight_strategy,
         validation_strategy=validation_strategy,
         preprocessing=preprocessing,
+        hyperparameters=hyperparameters,
         rationale=rationale,
     )
+
+
+def _select_hyperparameters(
+    data_size_label: str,
+    n_samples: int,
+    memory_mb: float,
+    high_cardinality_columns: List[str],
+    n_classes: int,
+) -> Optional[Dict[str, Any]]:
+    """根据数据规模、基数和类别数选择模型搜索空间。
+
+    - 大数据集：使用高效树模型 + 线性模型，避免高内存模型。
+    - 存在高基数类别列：排除 CatBoost（极易因类别编码膨胀导致 OOM/卡死）。
+    - 高类别数多分类：限制 GBM/XGB 树量，防止预测阶段遍历过多树导致评估极慢。
+    """
+    has_high_cardinality = len(high_cardinality_columns) > 0
+    high_class_count = n_classes > HIGH_CARDINALITY_CLASS_THRESHOLD
+
+    # 大数据/高基数/高类别数场景才需要显式限制模型空间
+    is_large = data_size_label == "large" or n_samples > 100_000 or memory_mb > 1024
+    if not (is_large or has_high_cardinality or high_class_count):
+        return None
+
+    # 高类别数下限制树模型复杂度，避免 218 万棵树级别的预测瓶颈
+    gbm_params: Dict[str, Any] = {}
+    xgb_params: Dict[str, Any] = {}
+    if high_class_count:
+        gbm_params = {"n_estimators": 1000, "num_leaves": 64}
+        xgb_params = {"n_estimators": 500, "max_depth": 8}
+
+    if is_large and not has_high_cardinality:
+        # 大数据但无高基数列：保留轻量 CatBoost
+        return {"GBM": gbm_params, "XGB": xgb_params, "LR": {}, "CAT": {"iterations": 500, "depth": 6}}
+
+    if is_large or has_high_cardinality:
+        # 大数据/高基数场景排除 CatBoost
+        return {"GBM": gbm_params, "XGB": xgb_params, "LR": {}}
+
+    # 仅高类别数但数据不大的场景：保留完整模型空间但限制 GBM/XGB
+    return {
+        "GBM": gbm_params,
+        "XGB": xgb_params,
+        "CAT": {"iterations": 500, "depth": 6},
+        "RF": {},
+        "XT": {},
+        "KNN": {},
+        "LR": {},
+        "NN_TORCH": {},
+    }
 
 
 def _auto_primary_metric(task_type: str, target_info: Dict[str, Any]) -> str:

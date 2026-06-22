@@ -9,6 +9,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+import warnings
+
 import pandas as pd
 
 
@@ -102,8 +104,35 @@ class DatasetSchema:
         return None
 
 
-def infer_field_type(series: pd.Series) -> FieldType:
-    """推断字段类型。"""
+def _looks_like_id(name: str) -> bool:
+    """根据列名语义判断是否像 ID/标识列。"""
+    lower = name.lower()
+    id_patterns = {
+        "id", "idx", "index", "key", "uuid", "serial", "code", "no", "num",
+        "编号", "序号", "编码", "单号", "流水号", "标识", "主键", "键",
+    }
+    return any(p in lower for p in id_patterns)
+
+
+def _is_datetime_string(series: pd.Series, threshold: float = 0.7) -> bool:
+    """判断 object 列是否可以被解析为日期。"""
+    if not (pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series)):
+        return False
+    non_null = series.dropna()
+    if len(non_null) == 0:
+        return False
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        parsed = pd.to_datetime(non_null, errors="coerce")
+    parsed_ratio = parsed.notna().mean()
+    return parsed_ratio >= threshold
+
+
+def infer_field_type(series: pd.Series, name: str = "") -> FieldType:
+    """推断字段类型。
+
+    对任意数据集鲁棒：考虑样本规模、列名语义、日期字符串解析等。
+    """
     nunique = series.nunique(dropna=True)
     total = len(series)
     unique_ratio = nunique / max(total, 1)
@@ -111,23 +140,52 @@ def infer_field_type(series: pd.Series) -> FieldType:
     if pd.api.types.is_datetime64_any_dtype(series):
         return FieldType.DATETIME
 
+    # object/string 列尝试识别日期
+    if _is_datetime_string(series):
+        return FieldType.DATETIME
+
     if pd.api.types.is_numeric_dtype(series):
-        # 整数且唯一值少 → ID
+        # 整数且几乎唯一：需同时满足列名像 ID 或呈现单调性才判为 ID
         if pd.api.types.is_integer_dtype(series) and unique_ratio > 0.9:
-            return FieldType.ID
-        # 数值但唯一值极少 → 类别/二值
+            if _looks_like_id(name) or _is_sequential(series):
+                return FieldType.ID
+        # 数值但唯一值极少 → 类别/二值；阈值随样本量自适应
         if nunique == 2:
             return FieldType.BINARY
-        if unique_ratio < 0.05 and nunique <= 10:
+        # 小样本（<100）时允许最多 10 个唯一值；大样本时按 5% 比例
+        categorical_cutoff = min(10, max(2, int(total * 0.05)))
+        if nunique <= categorical_cutoff:
             return FieldType.CATEGORICAL
         return FieldType.NUMERIC
 
     # 非数值类型
     if nunique == 2:
         return FieldType.BINARY
+
+    # 高基数类别列：数量极大或几乎唯一，视为 ID（如单据号、流水号）
+    # 需结合列名语义，避免误伤合法高基数类别（如门店编码）
+    if nunique > 100_000 or (unique_ratio > 0.95 and nunique > 10_000):
+        if _looks_like_id(name) or unique_ratio > 0.99:
+            return FieldType.ID
+
+    # 文本：半唯一且唯一值较多
     if unique_ratio > 0.5 and nunique > 100:
         return FieldType.TEXT
+
     return FieldType.CATEGORICAL
+
+
+def _is_sequential(series: pd.Series) -> bool:
+    """判断整数列是否近似单调（如 1,2,3,... 的行号）。"""
+    try:
+        sorted_vals = pd.to_numeric(series.dropna(), errors="coerce").sort_values().reset_index(drop=True)
+        if len(sorted_vals) <= 1:
+            return False
+        diffs = sorted_vals.diff().dropna()
+        # 单调递增且步长为 1 的比例高
+        return float((diffs == 1).mean()) > 0.95
+    except Exception:
+        return False
 
 
 def infer_schema(df: pd.DataFrame, target_column: str | None = None) -> DatasetSchema:
@@ -135,14 +193,18 @@ def infer_schema(df: pd.DataFrame, target_column: str | None = None) -> DatasetS
     fields = []
     for col in df.columns:
         series = df[col]
-        field_type = infer_field_type(series)
+        field_type = infer_field_type(series, name=col)
 
         constraints = FieldConstraint()
         if field_type in (FieldType.NUMERIC, FieldType.DATETIME):
             constraints.min_value = float(series.min()) if pd.notna(series.min()) else None
             constraints.max_value = float(series.max()) if pd.notna(series.max()) else None
         elif field_type in (FieldType.CATEGORICAL, FieldType.BINARY):
-            constraints.allowed_values = series.dropna().unique().tolist()
+            # allowed_values 仅作记录，不用于硬性校验，避免未知类别导致失败
+            constraints.allowed_values = sorted(
+                series.dropna().unique().tolist(),
+                key=lambda x: str(x),
+            )[:1000]
         elif field_type == FieldType.TEXT:
             lengths = series.dropna().astype(str).str.len()
             constraints.min_length = int(lengths.min()) if len(lengths) > 0 else None
@@ -221,13 +283,9 @@ def validate_against_schema(df: pd.DataFrame, schema: DatasetSchema) -> list[str
             except Exception:
                 pass
 
-        # 检查类别取值
-        if constraints.allowed_values is not None:
-            actual_values = set(series.dropna().unique())
-            allowed = set(constraints.allowed_values)
-            unexpected = actual_values - allowed
-            if unexpected:
-                errors.append(f"字段 '{field_schema.name}' 出现未允许的取值: {sorted(unexpected)}")
+        # 类别取值：仅作记录，不再硬性报错，由预处理统一处理未知类别
+        # if constraints.allowed_values is not None:
+        #     ...
 
     return errors
 

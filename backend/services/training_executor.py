@@ -41,6 +41,7 @@ class TrainingJob:
     max_models: int
     cleaning_rules: Dict[str, Any] | None = None
     feature_engineering_enabled: bool = True
+    candidate_config: Dict[str, Any] | None = None
     process: asyncio.subprocess.Process | None = None
     status: str = "pending"
     error_message: str | None = None
@@ -49,6 +50,9 @@ class TrainingJob:
 
 class TrainingExecutor:
     """异步训练任务执行器。"""
+
+    # 即使 time_budget_minutes 为 None，也设置硬超时，防止子进程无限挂起
+    DEFAULT_HARD_TIMEOUT_MINUTES = 240
 
     def __init__(self, max_concurrent_jobs: int = 2):
         """初始化执行器。
@@ -132,6 +136,7 @@ class TrainingExecutor:
             max_models=kwargs.get("max_models", 50),
             cleaning_rules=kwargs.get("cleaning_rules"),
             feature_engineering_enabled=kwargs.get("feature_engineering_enabled", True),
+            candidate_config=kwargs.get("candidate_config"),
         )
         self._jobs[run_id] = job
 
@@ -155,6 +160,7 @@ class TrainingExecutor:
             max_models=kwargs.get("max_models", 50),
             cleaning_rules=kwargs.get("cleaning_rules"),
             feature_engineering_enabled=kwargs.get("feature_engineering_enabled", True),
+            candidate_config=kwargs.get("candidate_config"),
         )
         self._jobs[run_id] = job
 
@@ -275,6 +281,8 @@ class TrainingExecutor:
             cmd.append("--no-feature-engineering")
         if job.cleaning_rules:
             cmd.extend(["--cleaning-rules", json.dumps(job.cleaning_rules, ensure_ascii=False)])
+        if job.candidate_config:
+            cmd.extend(["--candidate-config", json.dumps(job.candidate_config, ensure_ascii=False)])
 
         env = os.environ.copy()
         env["PREFECT_API_URL"] = ""
@@ -315,13 +323,13 @@ class TrainingExecutor:
             )
 
             # 同时泵送日志并等待子进程结束
-            # 当 time_budget_minutes 为 None 时不设置超时（无穷大）
+            # 当 time_budget_minutes 为 None 时使用硬超时，避免子进程无限挂起
             pump_task = asyncio.create_task(_pump_logs(job.process.stdout, log_file))
             if job.time_budget_minutes is None:
-                returncode = await job.process.wait()
+                timeout = self.DEFAULT_HARD_TIMEOUT_MINUTES * 60
             else:
                 timeout = job.time_budget_minutes * 60 + 60
-                returncode = await asyncio.wait_for(job.process.wait(), timeout=timeout)
+            returncode = await asyncio.wait_for(job.process.wait(), timeout=timeout)
             await pump_task
 
             if returncode != 0:

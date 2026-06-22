@@ -14,11 +14,15 @@ class DatasetCreate(BaseModel):
 
 
 class DatasetUpdate(BaseModel):
-    """更新数据集请求（目标列 / 任务类型）。"""
+    """更新数据集请求（目标列 / 任务类型）。
 
-    target_column: str
-    task_type: str = Field(
-        ..., pattern="^(binary_classification|multiclass_classification|regression)$"
+    当字段为空时，系统会根据数据自动推断。
+    """
+
+    target_column: Optional[str] = None
+    task_type: Optional[str] = Field(
+        default=None,
+        pattern="^(binary_classification|multiclass_classification|regression)$",
     )
 
 
@@ -71,13 +75,53 @@ class DatasetPreview(BaseModel):
     shape: tuple
 
 
+class ValueConstraint(BaseModel):
+    """列取值约束。"""
+
+    column: str
+    min_value: Optional[float] = None
+    max_value: Optional[float] = None
+
+
+class CleaningRules(BaseModel):
+    """数据清洗规则配置。"""
+
+    remove_duplicates: bool = True
+    drop_rows_with_missing_target: bool = True
+    numeric_impute_strategy: str = "median"  # median / mean / constant
+    numeric_impute_constant: Optional[float] = 0.0
+    categorical_impute_strategy: str = "mode"  # mode / constant
+    categorical_impute_constant: Optional[str] = "missing"
+    drop_columns: List[str] = Field(default_factory=list)
+    value_constraints: List[ValueConstraint] = Field(default_factory=list)
+
+
+class CandidateConfig(BaseModel):
+    """单次候选运行的配置参数（Agent 搜索空间）。"""
+
+    preset: Optional[str] = Field(default="auto")
+    max_models: Optional[int] = Field(default=None, ge=1, le=200)
+    time_budget_minutes: Optional[float] = Field(default=None, ge=0.1)
+    primary_metric: Optional[str] = None
+    seed: Optional[int] = Field(default=None, ge=0)
+    feature_engineering_enabled: Optional[bool] = None
+    cleaning_rules: Optional[CleaningRules] = None
+    hyperparameters: Optional[Dict[str, Any]] = None
+    validation_strategy: Optional[Dict[str, Any]] = None
+    reasoning: Optional[str] = None
+
+
 class RunCreate(BaseModel):
-    """启动训练任务请求。"""
+    """启动训练任务请求。
+
+    target_column / task_type 为空时，从数据集 schema_info 自动推断。
+    """
 
     dataset_id: str
-    target_column: str
-    task_type: str = Field(
-        ..., pattern="^(binary_classification|multiclass_classification|regression)$"
+    target_column: Optional[str] = None
+    task_type: Optional[str] = Field(
+        default=None,
+        pattern="^(binary_classification|multiclass_classification|regression)$",
     )
     primary_metric: Optional[str] = None
     # None 表示不限制训练时间（无穷大）
@@ -86,6 +130,56 @@ class RunCreate(BaseModel):
     preset: Optional[str] = Field(default="auto")
     seed: Optional[int] = Field(default=None, ge=0)
     feature_engineering_enabled: bool = Field(default=True)
+    experiment_id: Optional[str] = None
+    candidate_config: Optional[CandidateConfig] = None
+
+
+class ExperimentCreate(BaseModel):
+    """创建实验请求。"""
+
+    dataset_id: str
+    target_column: Optional[str] = None
+    task_type: Optional[str] = Field(
+        default=None,
+        pattern="^(binary_classification|multiclass_classification|regression)$",
+    )
+    primary_metric: Optional[str] = None
+    max_iterations: int = Field(default=5, ge=1, le=20)
+    trials_per_iteration: int = Field(default=2, ge=1, le=5)
+    time_budget_minutes: Optional[float] = Field(default=10, ge=0.1)
+
+
+class ExperimentResponse(BaseModel):
+    """实验响应。"""
+
+    id: str
+    dataset_id: str
+    status: str
+    search_config: Optional[Dict[str, Any]]
+    best_run_id: Optional[str]
+    error_message: Optional[str]
+    created_at: datetime
+    completed_at: Optional[datetime]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TrialResponse(BaseModel):
+    """Trial 响应。"""
+
+    id: str
+    experiment_id: str
+    run_id: Optional[str]
+    candidate_params: Optional[Dict[str, Any]]
+    val_score: Optional[float]
+    test_score: Optional[float]
+    primary_metric: Optional[str]
+    status: str
+    error_message: Optional[str]
+    created_at: datetime
+    completed_at: Optional[datetime]
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class RunResponse(BaseModel):
@@ -93,6 +187,7 @@ class RunResponse(BaseModel):
 
     id: str
     dataset_id: str
+    experiment_id: Optional[str]
     status: str
     time_budget_minutes: Optional[float]
     primary_metric: Optional[str]
@@ -152,27 +247,6 @@ class ExplainResponse(BaseModel):
     prediction: Any
     problem_type: str
     features: List[Dict[str, Any]]
-
-
-class ValueConstraint(BaseModel):
-    """列取值约束。"""
-
-    column: str
-    min_value: Optional[float] = None
-    max_value: Optional[float] = None
-
-
-class CleaningRules(BaseModel):
-    """数据清洗规则配置。"""
-
-    remove_duplicates: bool = True
-    drop_rows_with_missing_target: bool = True
-    numeric_impute_strategy: str = "median"  # median / mean / constant
-    numeric_impute_constant: Optional[float] = 0.0
-    categorical_impute_strategy: str = "mode"  # mode / constant
-    categorical_impute_constant: Optional[str] = "missing"
-    drop_columns: List[str] = Field(default_factory=list)
-    value_constraints: List[ValueConstraint] = Field(default_factory=list)
 
 
 class DatasetQualityResponse(BaseModel):

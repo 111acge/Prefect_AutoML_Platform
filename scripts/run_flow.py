@@ -38,8 +38,8 @@ def _write_error(output_dir: str, exc: Exception) -> dict:
 def main():
     parser = argparse.ArgumentParser(description="Run AutoML Flow")
     parser.add_argument("--file-path", required=True)
-    parser.add_argument("--target-column", required=True)
-    parser.add_argument("--task-type", required=True)
+    parser.add_argument("--target-column", default=None)
+    parser.add_argument("--task-type", default=None)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--time-budget-minutes", type=float, default=10)
     parser.add_argument("--preset", default="medium_quality")
@@ -48,6 +48,11 @@ def main():
     parser.add_argument("--max-models", type=int, default=50)
     parser.add_argument("--callback-url", default=None)
     parser.add_argument("--cleaning-rules", default=None, help="JSON 字符串形式的清洗规则")
+    parser.add_argument(
+        "--candidate-config",
+        default=None,
+        help="JSON 字符串形式的 Agent 候选配置（覆盖策略参数）",
+    )
     parser.add_argument(
         "--no-feature-engineering",
         action="store_true",
@@ -70,6 +75,7 @@ def main():
             max_models=args.max_models,
             cleaning_rules=json.loads(args.cleaning_rules) if args.cleaning_rules else None,
             feature_engineering_enabled=not args.no_feature_engineering,
+            candidate_config=json.loads(args.candidate_config) if args.candidate_config else None,
         )
     except Exception as exc:
         error_info = _write_error(args.output_dir, exc)

@@ -99,10 +99,10 @@ def test_create_run(default_dataset, monkeypatch):
     """测试创建训练任务。"""
     from services.training_executor import training_executor
 
-    async def _mock_submit(**kwargs):
+    def _mock_submit_sync(**kwargs):
         return None
 
-    monkeypatch.setattr(training_executor, "submit", _mock_submit)
+    monkeypatch.setattr(training_executor, "submit_sync", _mock_submit_sync)
 
     response = client.post(
         "/api/runs",
@@ -120,6 +120,58 @@ def test_create_run(default_dataset, monkeypatch):
     assert data["dataset_id"] == default_dataset.id
 
 
+def test_upload_dataset_auto_inference():
+    """上传时未指定目标列/任务类型，系统自动推断并写入数据集。"""
+    csv_content = "id,feat1,feat2,label\n1,0.1,0.2,0\n2,0.3,0.4,1\n3,0.5,0.6,0\n4,0.7,0.8,1\n"
+    response = client.post(
+        "/api/datasets/upload",
+        data={"name": "auto_infer_data"},
+        files={"file": ("test.csv", csv_content, "text/csv")},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["target_column"] == "label"
+    assert data["task_type"] == "binary_classification"
+    assert data["schema_info"]["suggested_target_column"] == "label"
+
+
+def test_create_run_auto_inference(default_dataset, monkeypatch):
+    """未显式提供 target/task 时，从数据集 schema_info 自动填充。"""
+    from services.training_executor import training_executor
+
+    def _mock_submit_sync(**kwargs):
+        return None
+
+    monkeypatch.setattr(training_executor, "submit_sync", _mock_submit_sync)
+
+    # default_dataset 的 schema_info 中包含 target/task
+    response = client.post(
+        "/api/runs",
+        json={
+            "dataset_id": default_dataset.id,
+            "time_budget_minutes": 0.1,
+            "preset": "medium_quality",
+        },
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["status"] == "pending"
+    assert data["config"]["target_column"] == "target"
+    assert data["config"]["task_type"] == "multiclass_classification"
+
+
+def test_update_dataset_auto_inference(default_dataset):
+    """update_dataset 未提供 task_type 时自动推断。"""
+    response = client.put(
+        f"/api/datasets/{default_dataset.id}",
+        json={"target_column": "target"},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["target_column"] == "target"
+    assert data["task_type"] == "multiclass_classification"
+
+
 def test_get_run_not_found():
     """测试获取不存在的任务。"""
     response = client.get("/api/runs/non-existent-id")
@@ -134,10 +186,10 @@ def test_predict_before_completion(default_dataset, monkeypatch):
     """
     from services.training_executor import training_executor
 
-    async def _mock_submit(**kwargs):
+    def _mock_submit_sync(**kwargs):
         return None
 
-    monkeypatch.setattr(training_executor, "submit", _mock_submit)
+    monkeypatch.setattr(training_executor, "submit_sync", _mock_submit_sync)
 
     response = client.post(
         "/api/runs",
@@ -231,8 +283,8 @@ def test_end_to_end_training(default_dataset):
     )
     run_id = response.json()["id"]
 
-    # 等待训练完成
-    for _ in range(60):
+    # 等待训练完成（含特征工程、训练、评估、报告生成，预算 1 分钟时可能需 2~3 分钟）
+    for _ in range(120):
         import time
 
         time.sleep(2)

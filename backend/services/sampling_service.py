@@ -44,6 +44,14 @@ def _imbalance_ratio(y: pd.Series) -> float:
     return float(counts.max() / counts.min())
 
 
+def _safe_k_neighbors(y: pd.Series, default: int = 5) -> int:
+    """根据最小类样本数计算安全的 k_neighbors，避免 SMOTE 崩溃。"""
+    min_class_count = y.value_counts().min()
+    # SMOTE 要求 k_neighbors < min_class_count
+    safe_k = min(default, max(1, int(min_class_count) - 1))
+    return safe_k
+
+
 def build_sampling_strategy(
     train_df: pd.DataFrame,
     target_column: str,
@@ -106,11 +114,20 @@ def build_sampling_strategy(
 
     # 无缺失值且全数值：可用 SMOTE / ADASYN
     has_missing = feature_df.isnull().any().any()
+    safe_k = _safe_k_neighbors(y)
+    if safe_k <= 0:
+        return SamplingStrategy(
+            method="random_over",
+            params={"random_state": 42},
+            imbalance_ratio=ratio,
+            rationale=rationale + ["最小类样本数过少，SMOTE 不安全，回退到 RandomOverSampler"],
+        )
+
     if not has_missing and len(categorical_cols) == 0:
         if ratio <= 10.0:
             strategy = SamplingStrategy(
                 method="smote",
-                params={"k_neighbors": min(5, len(train_df) // 2), "random_state": 42},
+                params={"k_neighbors": safe_k, "random_state": 42},
                 imbalance_ratio=ratio,
                 rationale=rationale
                 + ["特征全为数值且无缺失，使用 SMOTE 过采样"],
@@ -118,7 +135,7 @@ def build_sampling_strategy(
         else:
             strategy = SamplingStrategy(
                 method="smote_enn",
-                params={"k_neighbors": min(5, len(train_df) // 2), "random_state": 42},
+                params={"k_neighbors": safe_k, "random_state": 42},
                 imbalance_ratio=ratio,
                 rationale=rationale
                 + ["严重不平衡，使用 SMOTEENN 组合采样清理噪声边界"],
@@ -132,7 +149,7 @@ def build_sampling_strategy(
             method="smotenc",
             params={
                 "categorical_features": cat_indices,
-                "k_neighbors": min(5, len(train_df) // 2),
+                "k_neighbors": safe_k,
                 "random_state": 42,
             },
             imbalance_ratio=ratio,

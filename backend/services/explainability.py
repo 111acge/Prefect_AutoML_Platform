@@ -9,7 +9,87 @@ import numpy as np
 import pandas as pd
 from autogluon.tabular import TabularPredictor
 
+from config import (
+    settings,
+    HIGH_CARDINALITY_CLASS_THRESHOLD,
+    EXTREME_CARDINALITY_CLASS_THRESHOLD,
+    LARGE_DATASET_ROW_THRESHOLD,
+    DEFAULT_SHAP_SAMPLE_SIZE_HIGH_CARD,
+    DEFAULT_SHAP_SAMPLE_SIZE_NORMAL,
+    DEFAULT_PERM_IMPORTANCE_REPEATS_HIGH_CARD,
+    DEFAULT_PERM_IMPORTANCE_REPEATS_NORMAL,
+    DEFAULT_PERM_IMPORTANCE_SAMPLE_SIZE,
+)
+
 logger = logging.getLogger(__name__)
+
+
+def _resolve_n_classes(
+    predictor: TabularPredictor,
+    data: pd.DataFrame,
+    target_column: str,
+) -> int:
+    """根据 predictor 或数据解析目标类别数。"""
+    problem_type = getattr(predictor, "problem_type", None)
+    if problem_type not in ("binary", "multiclass"):
+        return 0
+    if hasattr(predictor, "class_labels") and predictor.class_labels is not None:
+        return len(predictor.class_labels)
+    if target_column in data.columns:
+        return int(data[target_column].nunique(dropna=True))
+    return 0
+
+
+def _resolve_shap_sample_size(
+    sample_size: Optional[int],
+    n_classes: int,
+) -> int:
+    """解析 SHAP 采样大小；返回 0 表示跳过 SHAP。"""
+    if not settings.shap_enabled:
+        return 0
+    if sample_size is not None:
+        return sample_size
+    if settings.shap_max_sample_size is not None:
+        return settings.shap_max_sample_size
+    # 自动决策
+    if n_classes > EXTREME_CARDINALITY_CLASS_THRESHOLD:
+        return 0
+    if n_classes > HIGH_CARDINALITY_CLASS_THRESHOLD:
+        return DEFAULT_SHAP_SAMPLE_SIZE_HIGH_CARD
+    return DEFAULT_SHAP_SAMPLE_SIZE_NORMAL
+
+
+def _resolve_permutation_importance_params(
+    n_repeats: Optional[int],
+    sample_size: Optional[int],
+    n_classes: int,
+    n_rows: int,
+) -> Optional[tuple[int, Optional[int]]]:
+    """解析 Permutation Importance 参数；返回 None 表示跳过。"""
+    if not settings.permutation_importance_enabled:
+        return None
+
+    effective_repeats = n_repeats if n_repeats is not None else settings.permutation_importance_max_repeats
+    effective_sample_size = sample_size if sample_size is not None else settings.permutation_importance_sample_size
+
+    if effective_repeats == 0:
+        return None
+
+    high_cardinality = (
+        n_classes > HIGH_CARDINALITY_CLASS_THRESHOLD or n_rows > LARGE_DATASET_ROW_THRESHOLD
+    )
+
+    # 自动决策
+    if effective_repeats is None:
+        effective_repeats = (
+            DEFAULT_PERM_IMPORTANCE_REPEATS_HIGH_CARD
+            if high_cardinality
+            else DEFAULT_PERM_IMPORTANCE_REPEATS_NORMAL
+        )
+    if effective_sample_size is None and high_cardinality:
+        effective_sample_size = DEFAULT_PERM_IMPORTANCE_SAMPLE_SIZE
+
+    return effective_repeats, effective_sample_size
 
 
 def compute_shap_values(
@@ -17,7 +97,7 @@ def compute_shap_values(
     data: pd.DataFrame,
     target_column: str,
     output_dir: Path,
-    sample_size: int = 200,
+    sample_size: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     计算并保存 SHAP 值。
@@ -30,21 +110,35 @@ def compute_shap_values(
         data: 用于计算 SHAP 的数据（通常是训练集子集）
         target_column: 目标列名
         output_dir: 输出目录
-        sample_size: 大数据集时采样的样本数
+        sample_size: 大数据集时采样的样本数；None 时使用配置 SHAP_MAX_SAMPLE_SIZE
 
     Returns:
         SHAP 摘要统计信息
     """
     import importlib.util
 
+    if not settings.shap_enabled:
+        logger.warning("SHAP 已通过配置禁用，跳过计算")
+        return {}
+
     if importlib.util.find_spec("shap") is None:
         logger.warning("shap 未安装，跳过 SHAP 计算")
         return {}
 
     try:
+        n_classes = _resolve_n_classes(predictor, data, target_column)
+        effective_sample_size = _resolve_shap_sample_size(sample_size, n_classes)
+        if effective_sample_size == 0:
+            logger.warning(
+                f"SHAP 根据数据特征自动跳过（n_classes={n_classes}），"
+                "可通过 SHAP_MAX_SAMPLE_SIZE 覆盖"
+            )
+            return {}
+
         X = data.drop(columns=[target_column])
-        if len(X) > sample_size:
-            X_sample = X.sample(n=sample_size, random_state=42)
+        if len(X) > effective_sample_size:
+            X_sample = X.sample(n=effective_sample_size, random_state=42)
+            logger.info(f"SHAP 自动采样至 {len(X_sample)} 行（n_classes={n_classes}）")
         else:
             X_sample = X
         feature_names = X_sample.columns.tolist()
@@ -89,7 +183,8 @@ def compute_permutation_importance(
     data: pd.DataFrame,
     target_column: str,
     output_dir: Path,
-    n_repeats: int = 5,
+    n_repeats: Optional[int] = None,
+    sample_size: Optional[int] = None,
     random_state: int = 42,
 ) -> Dict[str, Any]:
     """计算 Permutation Importance，用于检测泄露和无偏重要性评估。
@@ -102,6 +197,29 @@ def compute_permutation_importance(
         if not feature_cols:
             return {}
 
+        n_classes = _resolve_n_classes(predictor, data, target_column)
+        resolved = _resolve_permutation_importance_params(
+            n_repeats=n_repeats,
+            sample_size=sample_size,
+            n_classes=n_classes,
+            n_rows=len(data),
+        )
+        if resolved is None:
+            logger.warning(
+                f"Permutation Importance 根据数据特征自动跳过（n_classes={n_classes}），"
+                "可通过 PERMUTATION_IMPORTANCE_MAX_REPEATS 覆盖"
+            )
+            return {}
+
+        effective_n_repeats, effective_sample_size = resolved
+        eval_data = data
+        if effective_sample_size is not None and len(data) > effective_sample_size:
+            eval_data = data.sample(n=effective_sample_size, random_state=random_state)
+            logger.info(
+                f"Permutation Importance 自动采样至 {len(eval_data)} 行"
+                f"（n_classes={n_classes}, n_repeats={effective_n_repeats}）"
+            )
+
         def _score(df: pd.DataFrame) -> float:
             perf = predictor.evaluate(df)
             metric_name = predictor.eval_metric.name
@@ -109,14 +227,14 @@ def compute_permutation_importance(
                 return float(perf[metric_name])
             return float(next(iter(perf.values())))
 
-        baseline_score = _score(data)
+        baseline_score = _score(eval_data)
         rng = np.random.default_rng(random_state)
 
         records = []
         for col in feature_cols:
             drops = []
-            for _ in range(n_repeats):
-                permuted = data.copy()
+            for _ in range(effective_n_repeats):
+                permuted = eval_data.copy()
                 permuted[col] = rng.permutation(permuted[col].values)
                 permuted_score = _score(permuted)
                 drops.append(baseline_score - permuted_score)
@@ -179,15 +297,20 @@ def explain_single_sample(
         # 没有背景数据时，用训练集统计均值构造一个背景样本
         background = pd.DataFrame([X.median().values], columns=feature_names)
 
+    # 对类别特征编码，避免 SHAP 做字符串运算
+    X_enc, encoders = _encode_for_shap(X)
+    background_enc = _encode_for_shap(background)[0]
+
     if problem_type in ["binary", "multiclass"]:
         classes = predictor.class_labels
 
         def predict_proba_fn(X_arr):
             X_df = pd.DataFrame(X_arr, columns=feature_names) if isinstance(X_arr, np.ndarray) else X_arr
+            X_df = _decode_for_prediction(X_df, encoders)
             return predictor.predict_proba(X_df).reindex(columns=classes).values
 
-        explainer = shap.Explainer(predict_proba_fn, background)
-        shap_values_obj = explainer(X)
+        explainer = shap.Explainer(predict_proba_fn, background_enc)
+        shap_values_obj = explainer(X_enc)
         shap_array = np.asarray(shap_values_obj.values)
 
         if problem_type == "binary":
@@ -207,10 +330,11 @@ def explain_single_sample(
     else:
         def predict_fn(X_arr):
             X_df = pd.DataFrame(X_arr, columns=feature_names) if isinstance(X_arr, np.ndarray) else X_arr
+            X_df = _decode_for_prediction(X_df, encoders)
             return predictor.predict(X_df).values
 
-        explainer = shap.Explainer(predict_fn, background)
-        shap_values_obj = explainer(X)
+        explainer = shap.Explainer(predict_fn, background_enc)
+        shap_values_obj = explainer(X_enc)
         contributions = np.asarray(shap_values_obj.values)[0]
         base_value = float(explainer.expected_value)
         pred = predictor.predict(X).iloc[0]
@@ -251,6 +375,40 @@ def _normalize_shap_matrix(shap_values: Any, X_sample: pd.DataFrame) -> np.ndarr
     raise ValueError(f"不支持的 SHAP 值类型: {type(shap_values)}")
 
 
+def _encode_for_shap(data: pd.DataFrame) -> tuple[pd.DataFrame, Dict[str, Any]]:
+    """将类别/对象类型列标签编码为浮点数，供 SHAP 使用。
+
+    SHAP 需要在特征值上做数值运算（如与 background 求差），
+    字符串类型会导致 'str' - 'str' 错误。编码后由预测函数再解码回原始值。
+    """
+    encoded = data.copy()
+    encoders: Dict[str, Any] = {}
+    for col in encoded.columns:
+        dtype = encoded[col].dtype
+        is_categorical = isinstance(dtype, pd.CategoricalDtype) or pd.api.types.is_object_dtype(
+            dtype
+        )
+        if is_categorical:
+            categories = encoded[col].astype(str).unique()
+            cat_to_code = {cat: float(i) for i, cat in enumerate(categories)}
+            encoders[col] = {"categories": categories, "cat_to_code": cat_to_code}
+            encoded[col] = encoded[col].astype(str).map(cat_to_code).astype(float)
+    return encoded, encoders
+
+
+def _decode_for_prediction(data: pd.DataFrame, encoders: Dict[str, Any]) -> pd.DataFrame:
+    """将 SHAP 编码后的数值数据还原为原始类别，供 predictor.predict_proba 使用。"""
+    decoded = data.copy()
+    for col, enc in encoders.items():
+        if col not in decoded.columns:
+            continue
+        categories = enc["categories"]
+        # SHAP 扰动会产生非整数，四舍五入并截断到有效范围
+        codes = decoded[col].round().astype(int).clip(0, len(categories) - 1)
+        decoded[col] = codes.map(lambda c: categories[c])
+    return decoded
+
+
 def _compute_shap_with_explainer(
     predictor: TabularPredictor,
     X_sample: pd.DataFrame,
@@ -260,7 +418,10 @@ def _compute_shap_with_explainer(
     import shap
 
     problem_type = predictor.problem_type
-    background = shap.sample(X_sample, min(50, len(X_sample)), random_state=42)
+
+    # 对类别特征做数值编码，避免 SHAP 内部做字符串减法
+    X_sample_enc, encoders = _encode_for_shap(X_sample)
+    background_enc = shap.sample(X_sample_enc, min(50, len(X_sample_enc)), random_state=42)
 
     if problem_type in ["binary", "multiclass"]:
         classes = predictor.class_labels
@@ -270,12 +431,13 @@ def _compute_shap_with_explainer(
                 X_df = pd.DataFrame(X_arr, columns=feature_names)
             else:
                 X_df = X_arr
+            X_df = _decode_for_prediction(X_df, encoders)
             proba = predictor.predict_proba(X_df)
             # 保持类别顺序一致
             return proba.reindex(columns=classes).values
 
-        explainer = shap.Explainer(predict_proba_fn, background)
-        shap_values_obj = explainer(X_sample)
+        explainer = shap.Explainer(predict_proba_fn, background_enc)
+        shap_values_obj = explainer(X_sample_enc)
         shap_array = np.asarray(shap_values_obj.values)
 
         if shap_array.ndim == 2:
@@ -300,8 +462,9 @@ def _compute_shap_with_explainer(
             X_df = pd.DataFrame(X_arr, columns=feature_names)
         else:
             X_df = X_arr
+        X_df = _decode_for_prediction(X_df, encoders)
         return predictor.predict(X_df).values
 
-    explainer = shap.Explainer(predict_fn, background)
-    shap_values_obj = explainer(X_sample)
+    explainer = shap.Explainer(predict_fn, background_enc)
+    shap_values_obj = explainer(X_sample_enc)
     return np.asarray(shap_values_obj.values)

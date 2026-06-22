@@ -16,11 +16,21 @@ from prefect.cache_policies import INPUTS, TASK_SOURCE
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from config import settings
-from services.data_service import load_dataframe, analyze_metadata
+from config import (
+    settings,
+    HIGH_CARDINALITY_CLASS_THRESHOLD,
+    LARGE_DATASET_ROW_THRESHOLD,
+    DEFAULT_TRAIN_EVAL_SAMPLE_SIZE,
+)
+from services.data_service import (
+    load_dataframe,
+    analyze_metadata,
+    infer_target_column,
+    infer_task_type,
+)
 from services.data_quality import assess_data_quality
 from services.automl import AutoMLService
-from services.preprocessing import clean_dataframe, engineer_features, split_data
+from services.preprocessing import clean_dataframe, engineer_features, train_val_test_split
 from services.preprocessing_pipeline import DataPreprocessor, save_feature_columns
 from services.sampling_service import build_sampling_strategy, apply_sampling
 from services.training_strategy import build_strategy
@@ -91,16 +101,27 @@ def split_data_task(
     df: pd.DataFrame,
     target_column: str,
     task_type: str = "regression",
-    test_size: float = 0.2,
+    val_size: float = 0.15,
+    test_size: float = 0.15,
     random_state: int = 42,
 ) -> Dict[str, pd.DataFrame]:
-    """划分训练集和测试集。"""
-    result = split_data(
-        df, target_column, task_type=task_type, test_size=test_size, random_state=random_state
+    """严格划分训练集、验证集、测试集。
+
+    验证集用于候选模型/配置选择，测试集仅用于最终 unbiased 评估。
+    """
+    result = train_val_test_split(
+        df,
+        target_column,
+        task_type=task_type,
+        val_size=val_size,
+        test_size=test_size,
+        random_state=random_state,
     )
-    train_df, test_df = result["train"], result["test"]
-    logger.info(f"数据划分完成: 训练集 {train_df.shape}, 测试集 {test_df.shape}")
-    return {"train": train_df, "test": test_df}
+    train_df, val_df, test_df = result["train"], result["val"], result["test"]
+    logger.info(
+        f"数据划分完成: 训练集 {train_df.shape}, 验证集 {val_df.shape}, 测试集 {test_df.shape}"
+    )
+    return {"train": train_df, "val": val_df, "test": test_df}
 
 
 @task(cache_policy=INPUTS + TASK_SOURCE)
@@ -111,18 +132,40 @@ def build_strategy_task(
     preset: Optional[str] = None,
     primary_metric: Optional[str] = None,
     max_models: Optional[int] = None,
+    candidate_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """根据数据元数据构建训练策略。"""
+    """根据数据元数据构建训练策略，并合并 Agent 推荐的候选配置。"""
+    candidate_config = candidate_config or {}
+
+    # Agent 推荐的候选参数覆盖用户/默认参数
+    effective_time_budget = candidate_config.get("time_budget_minutes") or time_budget_minutes
+    effective_preset = candidate_config.get("preset") or preset
+    effective_primary_metric = candidate_config.get("primary_metric") or primary_metric
+    effective_max_models = candidate_config.get("max_models") or max_models
+
     strategy = build_strategy(
         metadata=metadata,
         task_type=task_type,
-        user_time_budget_minutes=time_budget_minutes,
-        user_preset=preset,
-        user_primary_metric=primary_metric,
-        user_max_models=max_models,
+        user_time_budget_minutes=effective_time_budget,
+        user_preset=effective_preset,
+        user_primary_metric=effective_primary_metric,
+        user_max_models=effective_max_models,
     )
-    logger.info(f"训练策略: {strategy.to_dict()}")
-    return strategy.to_dict()
+    strategy_dict = strategy.to_dict()
+
+    # 合并候选配置中的预处理/验证/模型搜索空间覆盖
+    if candidate_config.get("preprocessing"):
+        strategy_dict.setdefault("preprocessing", {}).update(candidate_config["preprocessing"])
+    if candidate_config.get("validation_strategy"):
+        strategy_dict["validation_strategy"] = {
+            **strategy_dict.get("validation_strategy", {}),
+            **candidate_config["validation_strategy"],
+        }
+    if candidate_config.get("hyperparameters"):
+        strategy_dict["hyperparameters"] = candidate_config["hyperparameters"]
+
+    logger.info(f"训练策略: {strategy_dict}")
+    return strategy_dict
 
 
 @task
@@ -200,20 +243,28 @@ def train_model_task(
 @task(timeout_seconds=3600)
 def evaluate_model_task(
     test_data: pd.DataFrame,
+    val_data: pd.DataFrame,
     train_data: pd.DataFrame,
     target_column: str,
     output_dir: str,
     cv_results: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """评估模型任务，生成测试集标准指标、扩展指标和训练集参考指标。"""
+    """评估模型任务，生成验证集/测试集/训练集指标。
+
+    验证集分数用于候选配置选择；测试集仅用于最终 unbiased 报告。
+    """
     from autogluon.tabular import TabularPredictor
 
     model_path = Path(output_dir) / "autogluon_models"
     predictor = TabularPredictor.load(str(model_path))
 
-    # 使用测试集评估，生成标准指标字典
+    # 验证集评估（候选选择依据）
+    val_performance = predictor.evaluate(val_data)
+    metrics = {"val": {str(k): float(v) for k, v in val_performance.items()}}
+
+    # 测试集评估（最终报告）
     test_performance = predictor.evaluate(test_data)
-    metrics = {"final": {str(k): float(v) for k, v in test_performance.items()}}
+    metrics["final"] = {str(k): float(v) for k, v in test_performance.items()}
 
     # 扩展指标（测试集）
     X_test = test_data.drop(columns=[target_column])
@@ -223,9 +274,11 @@ def evaluate_model_task(
     if extended:
         metrics["extended"] = extended
 
-    # 二分类阈值调优
+    # 二分类阈值调优（在验证集上搜索，应用于测试集报告）
     if predictor.problem_type == "binary":
-        threshold_info = _compute_optimal_threshold(y_true, X_test, predictor)
+        X_val = val_data.drop(columns=[target_column])
+        y_val = val_data[target_column]
+        threshold_info = _compute_optimal_threshold(y_val, X_val, predictor)
         metrics["threshold"] = threshold_info
 
     # 集成验证：检查 WeightedEnsemble 是否带来明显提升
@@ -236,11 +289,39 @@ def evaluate_model_task(
         logger.warning(f"集成验证失败: {e}")
 
     # 训练集参考指标
-    try:
-        train_performance = predictor.evaluate(train_data)
-        metrics["train"] = {str(k): float(v) for k, v in train_performance.items()}
-    except Exception as e:
-        logger.warning(f"训练集评估失败: {e}")
+    if settings.train_eval_enabled:
+        try:
+            eval_train_data = train_data
+            sample_size = settings.train_eval_sample_size
+            n_classes = train_data[target_column].nunique(dropna=True)
+
+            if sample_size == 0:
+                logger.info("训练集评估已通过配置禁用（TRAIN_EVAL_SAMPLE_SIZE=0）")
+                eval_train_data = None
+            elif sample_size is not None and len(train_data) > sample_size:
+                eval_train_data = train_data.sample(n=sample_size, random_state=42)
+                logger.info(f"训练集评估按配置采样至 {len(eval_train_data)} 行")
+            elif sample_size is None and (
+                n_classes > HIGH_CARDINALITY_CLASS_THRESHOLD
+                or len(train_data) > LARGE_DATASET_ROW_THRESHOLD
+            ):
+                sample_size = min(DEFAULT_TRAIN_EVAL_SAMPLE_SIZE, len(train_data))
+                eval_train_data = train_data.sample(n=sample_size, random_state=42)
+                logger.info(
+                    f"训练集评估自动采样至 {len(eval_train_data)} 行"
+                    f"（n_classes={n_classes}）"
+                )
+
+            if eval_train_data is not None:
+                train_performance = predictor.evaluate(eval_train_data)
+                metrics["train"] = {str(k): float(v) for k, v in train_performance.items()}
+            else:
+                metrics["train"] = {}
+        except Exception as e:
+            logger.warning(f"训练集评估失败: {e}")
+            metrics["train"] = {}
+    else:
+        logger.warning("训练集评估已通过配置禁用")
         metrics["train"] = {}
 
     # 显式 CV 结果
@@ -253,7 +334,7 @@ def evaluate_model_task(
         json.dump(metrics, f, ensure_ascii=False, indent=2, default=str)
 
     logger.info(
-        f"模型评估完成: test={metrics['final']}, "
+        f"模型评估完成: val={metrics['val']}, test={metrics['final']}, "
         f"train={metrics.get('train', {})}, cv={metrics.get('cv', {})}"
     )
     return metrics
@@ -757,9 +838,9 @@ async def generate_business_interpretation_task(
 @flow(name="automl-end-to-end", log_prints=True)
 def automl_pipeline(
     file_path: str,
-    target_column: str,
-    task_type: str,
-    output_dir: str,
+    target_column: Optional[str] = None,
+    task_type: Optional[str] = None,
+    output_dir: str = "./automl_output",
     time_budget_minutes: Optional[float] = 10.0,
     preset: Optional[str] = None,
     primary_metric: Optional[str] = None,
@@ -767,23 +848,39 @@ def automl_pipeline(
     max_models: int = 50,
     cleaning_rules: Optional[Dict[str, Any]] = None,
     feature_engineering_enabled: bool = True,
+    candidate_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     端到端 AutoML Pipeline。
 
     Args:
         file_path: 数据集文件路径
-        target_column: 目标列名
-        task_type: 任务类型
+        target_column: 目标列名（可选，为空时自动推断）
+        task_type: 任务类型（可选，为空时自动推断）
         output_dir: 输出目录
         time_budget_minutes: 时间预算（分钟）
         preset: AutoGluon preset
         primary_metric: 主要评估指标
+        candidate_config: Agent 推荐的候选配置（可选）
     """
-    logger.info(f"启动 AutoML Pipeline: {file_path} -> {target_column}")
+    logger.info(f"启动 AutoML Pipeline: {file_path}")
 
     # 1. 加载数据
     df = load_data_task(file_path)
+
+    # 1.5 自动推断目标列和任务类型（无人干预）
+    if target_column is None or task_type is None:
+        inferred_target, confidence = infer_target_column(df, hint=target_column)
+        if inferred_target is None:
+            raise ValueError("无法自动推断目标列，请显式指定 target_column")
+        target_column = inferred_target
+        logger.info(f"自动推断目标列: {target_column} (置信度 {confidence:.2f})")
+
+    if task_type is None:
+        task_type = infer_task_type(df[target_column])
+        logger.info(f"自动推断任务类型: {task_type}")
+
+    logger.info(f"使用目标列/任务: {target_column} / {task_type}")
 
     # 2. 校验 Schema
     df = validate_schema_task(df, target_column)
@@ -791,8 +888,12 @@ def automl_pipeline(
     # 3. 元数据分析（基于原始数据）
     metadata = analyze_metadata_task(df, target_column)
 
-    # 3.5 数据质量六维评估
-    quality = assess_data_quality_task(df, target_column, output_dir)
+    # 3.5 数据质量六维评估（可选，失败不影响主流程）
+    try:
+        quality = assess_data_quality_task(df, target_column, output_dir)
+    except Exception as e:
+        logger.warning(f"数据质量评估失败，继续主流程: {e}")
+        quality = {}
 
     # 4. 策略路由（数据驱动）
     strategy = build_strategy_task(
@@ -802,34 +903,57 @@ def automl_pipeline(
         preset=preset,
         primary_metric=primary_metric,
         max_models=max_models,
+        candidate_config=candidate_config,
     )
-    strategy["feature_engineering_enabled"] = feature_engineering_enabled
+    strategy["feature_engineering_enabled"] = (
+        candidate_config.get("feature_engineering_enabled")
+        if candidate_config and candidate_config.get("feature_engineering_enabled") is not None
+        else feature_engineering_enabled
+    )
 
-    # 5. 划分训练集/测试集（必须在预处理前，防止数据泄露）
+    # 合并 Agent 推荐的清洗规则
+    effective_cleaning_rules: Dict[str, Any] = cleaning_rules or {}
+    if candidate_config and candidate_config.get("cleaning_rules"):
+        effective_cleaning_rules = {
+            **effective_cleaning_rules,
+            **candidate_config["cleaning_rules"],
+        }
+
+    # 5. 划分训练集/验证集/测试集（必须在预处理前，防止数据泄露）
     split_result = split_data_task(df, target_column, task_type=task_type)
     train_df_raw = split_result["train"]
+    val_df_raw = split_result["val"]
     test_df_raw = split_result["test"]
 
-    # 5.5 显式交叉验证（在原始训练数据上评估完整 Pipeline，防止泄露）
-    cv_results = cross_validate_task(
-        train_df=train_df_raw,
-        target_column=target_column,
-        task_type=task_type,
-        strategy=strategy,
-        cleaning_rules=cleaning_rules,
-    )
+    # 5.5 显式交叉验证（可选，失败不影响主流程）
+    try:
+        cv_results = cross_validate_task(
+            train_df=train_df_raw,
+            target_column=target_column,
+            task_type=task_type,
+            strategy=strategy,
+            cleaning_rules=effective_cleaning_rules,
+        )
+    except Exception as e:
+        logger.warning(f"交叉验证失败，继续主流程: {e}")
+        cv_results = {}
 
     # 6. 拟合并应用预处理 Pipeline（仅在训练集上 fit，再 transform 全量数据）
     preprocessor = fit_preprocessor_task(
         train_df=train_df_raw,
         target_column=target_column,
         strategy=strategy,
-        cleaning_rules=cleaning_rules,
+        cleaning_rules=effective_cleaning_rules,
     )
     train_df = transform_data_task(
         preprocessor=preprocessor,
         df=train_df_raw,
         dataset_label="训练集",
+    )
+    val_df = transform_data_task(
+        preprocessor=preprocessor,
+        df=val_df_raw,
+        dataset_label="验证集",
     )
     test_df = transform_data_task(
         preprocessor=preprocessor,
@@ -841,7 +965,7 @@ def automl_pipeline(
         output_dir=output_dir,
     )
     logger.info(
-        f"预处理完成: 训练集 {train_df.shape}, 测试集 {test_df.shape}, "
+        f"预处理完成: 训练集 {train_df.shape}, 验证集 {val_df.shape}, 测试集 {test_df.shape}, "
         f"特征列={preprocessor.feature_columns}"
     )
 
@@ -866,9 +990,9 @@ def automl_pipeline(
         sample_weight=sample_weight,
     )
 
-    # 9. 评估（测试集为主，训练集为参考，附带显式 CV 结果）
+    # 9. 评估（验证集用于候选选择，测试集用于最终 unbiased 评估，训练集为参考）
     metrics = evaluate_model_task(
-        test_df, train_df, target_column, output_dir, cv_results=cv_results
+        test_df, val_df, train_df, target_column, output_dir, cv_results=cv_results
     )
 
     # 9.5 LLM 业务解读（可选，失败不影响主流程）
@@ -880,28 +1004,35 @@ def automl_pipeline(
         strategy=strategy,
     )
 
-    # 10. 创建 Prefect Artifact
-    create_artifacts_task(
-        output_dir=output_dir,
-        metadata=metadata,
-        strategy=strategy,
-        sampling_strategy=sampling_strategy,
-        quality=quality,
-    )
+    # 10. 创建 Prefect Artifact（可选）
+    try:
+        create_artifacts_task(
+            output_dir=output_dir,
+            metadata=metadata,
+            strategy=strategy,
+            sampling_strategy=sampling_strategy,
+            quality=quality,
+        )
+    except Exception as e:
+        logger.warning(f"Prefect Artifact 创建失败，继续主流程: {e}")
 
-    # 11. 生成 HTML 报告
-    strategy["sampling"] = sampling_strategy
-    report_path = generate_report_task(
-        run_id=Path(output_dir).name,
-        output_dir=output_dir,
-        metadata=metadata,
-        strategy=strategy,
-        primary_metric=strategy.get("primary_metric"),
-        task_type=task_type,
-        seed=seed,
-        quality=quality,
-        interpretation=interpretation,
-    )
+    # 11. 生成 HTML 报告（可选，失败不影响主流程）
+    report_path = None
+    try:
+        strategy["sampling"] = sampling_strategy
+        report_path = generate_report_task(
+            run_id=Path(output_dir).name,
+            output_dir=output_dir,
+            metadata=metadata,
+            strategy=strategy,
+            primary_metric=strategy.get("primary_metric"),
+            task_type=task_type,
+            seed=seed,
+            quality=quality,
+            interpretation=interpretation,
+        )
+    except Exception as e:
+        logger.warning(f"HTML 报告生成失败，继续主流程: {e}")
 
     return {
         "status": "completed",

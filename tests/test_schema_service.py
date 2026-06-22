@@ -40,6 +40,13 @@ def test_infer_text_field():
     assert infer_field_type(series) == FieldType.TEXT
 
 
+def test_infer_id_like_high_cardinality_field():
+    """测试高基数 ID-like 字段推断。"""
+    # 模拟单据号：大量唯一值但未达到文本阈值
+    series = pd.Series([f"DOC{ i:08d}" for i in range(200_000)])
+    assert infer_field_type(series) == FieldType.ID
+
+
 def test_infer_datetime_field():
     """测试时间字段推断。"""
     series = pd.to_datetime(pd.Series(["2024-01-01", "2024-01-02", "2024-01-03"]))
@@ -75,14 +82,14 @@ def test_validate_against_schema_missing_column():
     assert any("缺少必填字段" in e for e in errors)
 
 
-def test_validate_against_schema_unexpected_category():
-    """测试未允许类别取值校验。"""
+def test_validate_against_schema_allows_unknown_category():
+    """未知类别取值不再硬性报错，由预处理统一编码。"""
     df = pd.DataFrame({"cat": ["a", "b", "a"]})
     schema = infer_schema(df)
 
     df_new = pd.DataFrame({"cat": ["a", "c", "a"]})
     errors = validate_against_schema(df_new, schema)
-    assert any("未允许的取值" in e for e in errors)
+    assert not any("未允许的取值" in e for e in errors)
 
 
 def test_align_to_schema():

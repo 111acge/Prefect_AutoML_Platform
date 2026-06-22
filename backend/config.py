@@ -36,6 +36,16 @@ class Settings(BaseSettings):
     openai_api_key: Optional[str] = None
     default_llm_model: Optional[str] = None
 
+    # 性能/稳定性优化开关（默认自动，根据数据特征决策；.env 中显式设置可覆盖）
+    train_eval_enabled: bool = True
+    train_eval_sample_size: Optional[int] = None  # None=自动；0=跳过训练集评估；N=采样N行
+    shap_enabled: bool = True
+    shap_max_sample_size: Optional[int] = None  # None=自动；0=跳过SHAP；N=最大采样N行
+    permutation_importance_enabled: bool = True
+    permutation_importance_max_repeats: Optional[int] = None  # None=自动；0=跳过；N=重复N次
+    permutation_importance_sample_size: Optional[int] = None  # None=自动；0=不采样；N=采样N行
+    data_quality_max_rows: Optional[int] = None  # None=自动；0=强制全量；N=最多N行
+
     model_config = SettingsConfigDict(
         env_file=str(project_root / ".env"),
         env_file_encoding="utf-8",
@@ -43,6 +53,18 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# 性能优化自动阈值常量
+HIGH_CARDINALITY_CLASS_THRESHOLD = 50
+EXTREME_CARDINALITY_CLASS_THRESHOLD = 200
+LARGE_DATASET_ROW_THRESHOLD = 100_000
+DEFAULT_DATA_QUALITY_SAMPLE_SIZE = 50_000
+DEFAULT_TRAIN_EVAL_SAMPLE_SIZE = 200
+DEFAULT_SHAP_SAMPLE_SIZE_HIGH_CARD = 50
+DEFAULT_SHAP_SAMPLE_SIZE_NORMAL = 200
+DEFAULT_PERM_IMPORTANCE_REPEATS_HIGH_CARD = 2
+DEFAULT_PERM_IMPORTANCE_REPEATS_NORMAL = 5
+DEFAULT_PERM_IMPORTANCE_SAMPLE_SIZE = 500
 
 # 确保数据目录存在
 settings.data_dir.mkdir(parents=True, exist_ok=True)

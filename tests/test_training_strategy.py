@@ -15,6 +15,7 @@ def _metadata(n_samples: int, n_features: int, **kwargs):
         "memory_mb": 1.0,
         "field_types": {},
         "missing_rates": {},
+        "high_cardinality_columns": kwargs.get("high_cardinality_columns", []),
         "target_info": kwargs.get("target_info"),
     }
 
@@ -76,3 +77,29 @@ def test_validation_strategy_for_medium_data():
     strategy = build_strategy(metadata, "multiclass_classification")
     assert strategy.validation_strategy["name"] == "holdout"
     assert "holdout_frac" in strategy.validation_strategy
+
+
+def test_large_data_disables_stacking_and_bagging():
+    metadata = _metadata(200_000, 20)
+    strategy = build_strategy(metadata, "binary_classification", user_time_budget_minutes=10.0)
+    assert strategy.data_size_label == "large"
+    assert strategy.auto_stack is False
+    assert strategy.num_bag_folds == 0
+    assert strategy.num_stack_levels == 0
+
+
+def test_large_data_with_high_cardinality_excludes_catboost():
+    metadata = _metadata(200_000, 20, high_cardinality_columns=["business_id"])
+    strategy = build_strategy(metadata, "binary_classification", user_time_budget_minutes=10.0)
+    assert strategy.hyperparameters is not None
+    assert "CAT" not in strategy.hyperparameters
+    assert "GBM" in strategy.hyperparameters
+    assert "XGB" in strategy.hyperparameters
+
+
+def test_large_data_without_high_cardinality_includes_limited_catboost():
+    metadata = _metadata(200_000, 20)
+    strategy = build_strategy(metadata, "binary_classification", user_time_budget_minutes=10.0)
+    assert strategy.hyperparameters is not None
+    assert "CAT" in strategy.hyperparameters
+    assert strategy.hyperparameters["CAT"].get("iterations") == 500

@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
-from routers import datasets, runs, intent
+from routers import datasets, runs, intent, experiments
 from services.seed_data import ensure_default_dataset
 from services.training_executor import training_executor
 
@@ -54,6 +54,7 @@ app.add_middleware(
 app.include_router(datasets.router, prefix="/api/datasets")
 app.include_router(runs.router, prefix="/api/runs")
 app.include_router(intent.router, prefix="/api/intent")
+app.include_router(experiments.router, prefix="/api/experiments")
 
 
 @app.get("/health")

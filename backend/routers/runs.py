@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import queue
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -41,6 +42,14 @@ def _get_output_dir(run_id: str) -> Path:
     output_dir = settings.report_dir / run_id
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
+
+
+def _get_id_columns_to_drop(schema_info: dict | None) -> list[str]:
+    """从 schema_info 中提取 ID-like 列，训练前自动剔除。"""
+    if not schema_info:
+        return []
+    field_types = schema_info.get("field_types", {})
+    return [col for col, ft in field_types.items() if ft == "id"]
 
 
 def _load_optimal_threshold(output_dir: Path) -> Optional[float]:
@@ -93,13 +102,29 @@ async def create_run(
     if not dataset:
         raise HTTPException(status_code=404, detail="数据集不存在")
 
+    # 自动填充目标列和任务类型
+    target_column = request.target_column or dataset.target_column
+    task_type = request.task_type or dataset.task_type
+
+    # 若数据集上仍未设置，尝试从 schema_info 推断
+    schema_info = dataset.schema_info or {}
+    if not target_column:
+        target_column = schema_info.get("suggested_target_column")
+    if not task_type:
+        task_type = schema_info.get("suggested_task_type")
+
+    if not target_column:
+        raise HTTPException(status_code=400, detail="无法确定目标列，请在上传数据集时指定或更新数据集")
+    if not task_type:
+        raise HTTPException(status_code=400, detail="无法确定任务类型，请在上传数据集时指定或更新数据集")
+
     # 校验任务类型与目标列是否匹配
     try:
         await asyncio.to_thread(
             _validate_task_type,
             dataset.file_path,
-            request.target_column,
-            request.task_type,
+            target_column,
+            task_type,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -109,7 +134,7 @@ async def create_run(
         schema = await asyncio.to_thread(
             build_schema_from_file,
             dataset.file_path,
-            request.target_column,
+            target_column,
         )
         errors = await asyncio.to_thread(
             validate_against_schema,
@@ -130,17 +155,20 @@ async def create_run(
         output_dir = _get_output_dir("temp")
         run = Run(
             dataset_id=request.dataset_id,
+            experiment_id=request.experiment_id,
             status="pending",
             time_budget_minutes=request.time_budget_minutes,
             primary_metric=request.primary_metric,
             output_dir=str(output_dir),
             config={
-                "target_column": request.target_column,
-                "task_type": request.task_type,
+                "target_column": target_column,
+                "task_type": task_type,
                 "preset": request.preset,
                 "max_models": request.max_models,
                 "seed": request.seed,
                 "feature_engineering_enabled": request.feature_engineering_enabled,
+                "experiment_id": request.experiment_id,
+                "candidate_config": request.candidate_config.model_dump() if request.candidate_config else None,
             },
         )
         db.add(run)
@@ -151,7 +179,21 @@ async def create_run(
         run.output_dir = str(output_dir)
 
         # 生成配置快照
-        snapshot = _build_config_snapshot(dataset, request)
+        # 构建一个与 request 等价的快照对象用于保存
+        snapshot_request = RunCreate(
+            dataset_id=request.dataset_id,
+            target_column=target_column,
+            task_type=task_type,
+            primary_metric=request.primary_metric,
+            time_budget_minutes=request.time_budget_minutes,
+            max_models=request.max_models,
+            preset=request.preset,
+            seed=request.seed,
+            feature_engineering_enabled=request.feature_engineering_enabled,
+            experiment_id=request.experiment_id,
+            candidate_config=request.candidate_config,
+        )
+        snapshot = _build_config_snapshot(dataset, snapshot_request)
         snapshot_path = output_dir / "config_snapshot.json"
         snapshot_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
         run.config = {**run.config, "snapshot": snapshot}
@@ -159,15 +201,22 @@ async def create_run(
         await db.commit()
         await db.refresh(run)
 
-        # 读取数据集配置的清洗规则
-        cleaning_rules = (dataset.schema_info or {}).get("cleaning_rules")
+        # 读取数据集配置的清洗规则，并自动加入 ID-like 列剔除
+        cleaning_rules = (dataset.schema_info or {}).get("cleaning_rules") or {}
+        id_columns = _get_id_columns_to_drop(dataset.schema_info)
+        if id_columns:
+            existing_drops = set(cleaning_rules.get("drop_columns", []))
+            existing_drops.update(id_columns)
+            cleaning_rules["drop_columns"] = list(existing_drops)
+            logger = logging.getLogger(__name__)
+            logger.info(f"运行 {run.id} 自动剔除 ID-like 列: {id_columns}")
 
         # 提交到异步训练执行器，避免阻塞 FastAPI worker
         training_executor.submit_sync(
             run_id=run.id,
             file_path=dataset.file_path,
-            target_column=request.target_column,
-            task_type=request.task_type,
+            target_column=target_column,
+            task_type=task_type,
             output_dir=str(output_dir),
             time_budget_minutes=request.time_budget_minutes,
             preset=request.preset,
@@ -176,6 +225,9 @@ async def create_run(
             max_models=request.max_models,
             cleaning_rules=cleaning_rules,
             feature_engineering_enabled=request.feature_engineering_enabled,
+            candidate_config=(
+                request.candidate_config.model_dump() if request.candidate_config else None
+            ),
         )
 
         return run
@@ -214,23 +266,48 @@ def _build_config_snapshot(dataset: Dataset, request: RunCreate) -> Dict[str, An
 
 
 def _validate_task_type(file_path: str, target_column: str, task_type: str) -> None:
-    """校验任务类型与目标列是否匹配。"""
+    """校验任务类型与目标列是否匹配，并拦截退化数据集。"""
     import pandas as pd
 
     df = load_dataframe(file_path)
     if target_column not in df.columns:
         raise ValueError(f"目标列 '{target_column}' 不存在")
 
+    # 退化数据集校验
+    feature_cols = [c for c in df.columns if c != target_column]
+    if len(df) < 10:
+        raise ValueError(f"样本数过少，至少需要 10 行，当前 {len(df)} 行")
+    if len(feature_cols) < 1:
+        raise ValueError("至少需要 1 个特征列")
+
     y = df[target_column]
-    unique_count = y.nunique()
+
+    if y.isnull().all():
+        raise ValueError("目标列全部为缺失值，无法训练")
+
+    y_dropped = y.dropna()
+    unique_count = y_dropped.nunique()
     is_numeric = pd.api.types.is_numeric_dtype(y)
+
+    if unique_count <= 1:
+        raise ValueError(f"目标列唯一值数量不足，当前 {unique_count} 个")
 
     if task_type == "binary_classification" and unique_count != 2:
         raise ValueError(f"二分类任务要求目标列恰好有 2 个唯一值，当前有 {unique_count} 个")
-    if task_type == "multiclass_classification" and unique_count < 3:
-        raise ValueError(f"多分类任务要求目标列至少有 3 个唯一值，当前有 {unique_count} 个")
+    if task_type == "multiclass_classification" and unique_count < 2:
+        raise ValueError(f"多分类任务要求目标列至少有 2 个唯一值，当前有 {unique_count} 个")
     if task_type == "regression" and not is_numeric:
         raise ValueError("回归任务要求目标列为数值类型")
+
+    # 分类任务中若最小类样本数极少，不再直接拒绝训练。
+    # 下游 split_data / AutoGluon 会通过 rare_class_strategy 自动过采样或限制折数。
+    if task_type in ("binary_classification", "multiclass_classification"):
+        min_class_count = y_dropped.value_counts().min()
+        if min_class_count < 2:
+            logger.warning(
+                f"目标列存在样本数 < 2 的类别（最小类={min_class_count}），"
+                f"将启用稀有类别自动处理策略（默认过采样到 2 条）。"
+            )
 
 
 @router.get("", response_model=List[RunResponse])

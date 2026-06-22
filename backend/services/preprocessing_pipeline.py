@@ -49,8 +49,9 @@ class DataPreprocessor(BaseEstimator, TransformerMixin):
         df = df.copy()
         rules = self.cleaning_rules or {}
 
-        # 删除重复行
-        if rules.get("remove_duplicates", True):
+        # 删除重复行：仅在包含目标列时执行（训练/评估数据），
+        # 避免 CV 或预测时因缺少目标列导致与 y 错位。
+        if rules.get("remove_duplicates", True) and self.target_column in df.columns:
             df = df.drop_duplicates()
 
         # 删除目标列缺失的行（仅在训练/评估时）

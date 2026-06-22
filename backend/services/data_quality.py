@@ -15,9 +15,32 @@ from typing import Dict, Any, List, Optional
 import numpy as np
 import pandas as pd
 
+from config import (
+    settings,
+    LARGE_DATASET_ROW_THRESHOLD,
+    DEFAULT_DATA_QUALITY_SAMPLE_SIZE,
+)
 
-def assess_data_quality(df: pd.DataFrame, target_column: str) -> Dict[str, Any]:
-    """评估数据质量并返回六维报告。"""
+
+def assess_data_quality(
+    df: pd.DataFrame,
+    target_column: str,
+    max_rows: Optional[int] = None,
+) -> Dict[str, Any]:
+    """评估数据质量并返回六维报告。
+
+    Args:
+        df: 输入数据
+        target_column: 目标列名
+        max_rows: 最大采样行数；None 时使用配置 DATA_QUALITY_MAX_ROWS，
+                  配置也为 None 时不对数据采样。
+    """
+    effective_max_rows = max_rows if max_rows is not None else settings.data_quality_max_rows
+    if effective_max_rows is None and len(df) > LARGE_DATASET_ROW_THRESHOLD:
+        effective_max_rows = DEFAULT_DATA_QUALITY_SAMPLE_SIZE
+    if effective_max_rows is not None and effective_max_rows > 0 and len(df) > effective_max_rows:
+        df = df.sample(n=effective_max_rows, random_state=42)
+
     feature_cols = [c for c in df.columns if c != target_column]
     n_rows, n_cols = df.shape
 

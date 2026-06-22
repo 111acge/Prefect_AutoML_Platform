@@ -127,13 +127,32 @@ class AutoMLService:
         fit_kwargs.update(stacking_config)
 
         # 验证策略：holdout / CV 透传给 AutoGluon
+        # 根据最小类样本数限制 CV 折数；最小类 < 2 时禁用 bagging CV，改用 holdout
+        if self._map_task_type(task_type) in ["binary", "multiclass"]:
+            min_class_count = int(train_data[target_column].value_counts().min())
+        else:
+            min_class_count = None
+
         if strategy is not None:
             validation_strategy = strategy.get("validation_strategy", {})
             if validation_strategy.get("name") == "cv":
-                # 使用 bagging 实现 KFold CV；移除 holdout_frac 避免冲突
-                fit_kwargs["num_bag_folds"] = validation_strategy.get("n_folds", 5)
-                fit_kwargs.pop("holdout_frac", None)
-                logger.info(f"启用 CV: num_bag_folds={fit_kwargs['num_bag_folds']}")
+                requested_folds = validation_strategy.get("n_folds", 5)
+                if min_class_count is not None and min_class_count < 2:
+                    logger.warning(
+                        f"最小类样本数={min_class_count}，无法使用 AutoGluon CV bagging，"
+                        f"回退到 holdout 验证"
+                    )
+                    fit_kwargs.pop("num_bag_folds", None)
+                    fit_kwargs["holdout_frac"] = validation_strategy.get(
+                        "holdout_frac", 0.2
+                    )
+                else:
+                    if min_class_count is not None:
+                        requested_folds = min(requested_folds, min_class_count)
+                    # 使用 bagging 实现 KFold CV；移除 holdout_frac 避免冲突
+                    fit_kwargs["num_bag_folds"] = requested_folds
+                    fit_kwargs.pop("holdout_frac", None)
+                    logger.info(f"启用 CV: num_bag_folds={fit_kwargs['num_bag_folds']}")
             else:
                 holdout_frac = validation_strategy.get("holdout_frac")
                 if holdout_frac is not None:
@@ -301,7 +320,7 @@ class AutoMLService:
                     m for m in predictor.model_names() if m.startswith("WeightedEnsemble")
                 ]
                 if ensemble_models:
-                    predictor.delete_models(models=ensemble_models)
+                    predictor.delete_models(models_to_delete=ensemble_models)
                 result["models_removed"] = ensemble_models
             except Exception as e:
                 logger.warning(f"集成回退失败: {e}")

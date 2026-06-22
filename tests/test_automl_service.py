@@ -38,8 +38,10 @@ class _FakePredictor:
     def set_model_best(self, model):
         self._best = model
 
-    def delete_models(self, models_to_keep=None, models=None, dry_run=False):
-        if models is not None:
+    def delete_models(self, models_to_keep=None, models_to_delete=None, models=None, dry_run=False):
+        if models_to_delete is not None:
+            self._models = [m for m in self._models if m not in models_to_delete]
+        elif models is not None:
             self._models = [m for m in self._models if m not in models]
         elif models_to_keep is not None:
             if isinstance(models_to_keep, str):
@@ -163,3 +165,83 @@ def test_validation_strategy_holdout_passes_holdout_frac(output_dir, monkeypatch
     )
 
     assert captured["fit_kwargs"]["holdout_frac"] == 0.2
+
+
+def test_validation_strategy_cv_fallback_when_min_class_count_is_one(
+    output_dir, monkeypatch
+):
+    """最小类只有 1 个样本时，CV bagging 应被禁用并回退到 holdout。"""
+    captured = {}
+
+    class _CapturePredictor(_FakePredictor):
+        def fit(self, **kwargs):
+            captured["fit_kwargs"] = kwargs
+            return self
+
+    def _fake_predictor(*args, **kwargs):
+        return _CapturePredictor(**kwargs)
+
+    monkeypatch.setattr("services.automl.TabularPredictor", _fake_predictor)
+    monkeypatch.setattr("services.automl.compute_shap_values", lambda *a, **k: None)
+
+    service = AutoMLService(output_dir)
+    train_data = pd.DataFrame({
+        "a": list(range(10)),
+        "b": ["x", "y"] * 5,
+        # 二分类，正类只有 1 个样本
+        "target": [1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    })
+    strategy = {
+        "validation_strategy": {"name": "cv", "n_folds": 5},
+    }
+
+    service.train(
+        train_data=train_data,
+        target_column="target",
+        task_type="binary_classification",
+        time_limit=30,
+        strategy=strategy,
+    )
+
+    assert "num_bag_folds" not in captured["fit_kwargs"]
+    assert captured["fit_kwargs"]["holdout_frac"] == 0.2
+
+
+def test_validation_strategy_cv_folds_capped_by_min_class_count(
+    output_dir, monkeypatch
+):
+    """CV 折数不应超过最小类样本数。"""
+    captured = {}
+
+    class _CapturePredictor(_FakePredictor):
+        def fit(self, **kwargs):
+            captured["fit_kwargs"] = kwargs
+            return self
+
+    def _fake_predictor(*args, **kwargs):
+        return _CapturePredictor(**kwargs)
+
+    monkeypatch.setattr("services.automl.TabularPredictor", _fake_predictor)
+    monkeypatch.setattr("services.automl.compute_shap_values", lambda *a, **k: None)
+
+    service = AutoMLService(output_dir)
+    train_data = pd.DataFrame({
+        "a": list(range(12)),
+        "b": ["x", "y"] * 6,
+        # 二分类，正类只有 3 个样本
+        "target": [1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    })
+    strategy = {
+        "validation_strategy": {"name": "cv", "n_folds": 10},
+    }
+
+    service.train(
+        train_data=train_data,
+        target_column="target",
+        task_type="binary_classification",
+        time_limit=30,
+        strategy=strategy,
+    )
+
+    assert captured["fit_kwargs"]["num_bag_folds"] == 3
+    assert "holdout_frac" not in captured["fit_kwargs"]

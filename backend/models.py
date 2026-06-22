@@ -32,6 +32,39 @@ class Dataset(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
 
 
+class Experiment(Base):
+    """实验表：一次 LLM 驱动的多候选搜索。"""
+
+    __tablename__ = "experiments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    dataset_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), default="running")
+    search_config: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    best_run_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class Trial(Base):
+    """实验 Trial 表：记录一次候选运行及其结果。"""
+
+    __tablename__ = "trials"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    experiment_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    run_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    candidate_params: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    val_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    test_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    primary_metric: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    status: Mapped[str] = mapped_column(String(50), default="pending")
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
 class Run(Base):
     """训练任务表。"""
 
@@ -39,6 +72,7 @@ class Run(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
     dataset_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    experiment_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="pending")
     # 默认值由 Pydantic 模式（RunCreate.time_budget_minutes=10）控制，数据库不设置 default，
     # 以便显式传入 None 时能够保存为 NULL（表示训练时间不限制）。

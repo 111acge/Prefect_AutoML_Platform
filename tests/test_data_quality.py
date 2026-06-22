@@ -61,3 +61,43 @@ def test_assess_data_quality_task_writes_report(tmp_path):
     assert report_path.exists()
     loaded = __import__("json").loads(report_path.read_text(encoding="utf-8"))
     assert loaded["n_rows"] == 4
+
+
+def test_assess_data_quality_respects_max_rows_config(monkeypatch):
+    """数据质量评估应遵循 DATA_QUALITY_MAX_ROWS 配置进行采样。"""
+    from config import settings
+    monkeypatch.setattr(settings, "data_quality_max_rows", 3)
+
+    df = pd.DataFrame({
+        "a": list(range(10)),
+        "target": [0, 1] * 5,
+    })
+    report = assess_data_quality(df, target_column="target")
+    assert report["n_rows"] == 3
+
+
+def test_assess_data_quality_max_rows_parameter_overrides_config(monkeypatch):
+    """assess_data_quality 的 max_rows 参数应覆盖配置。"""
+    from config import settings
+    monkeypatch.setattr(settings, "data_quality_max_rows", 5)
+
+    df = pd.DataFrame({
+        "a": list(range(10)),
+        "target": [0, 1] * 5,
+    })
+    report = assess_data_quality(df, target_column="target", max_rows=2)
+    assert report["n_rows"] == 2
+
+
+def test_assess_data_quality_auto_samples_large_data(monkeypatch):
+    """大数据集下数据质量评估应自动采样。"""
+    import services.data_quality as dq
+    monkeypatch.setattr(dq, "LARGE_DATASET_ROW_THRESHOLD", 20)
+    monkeypatch.setattr(dq, "DEFAULT_DATA_QUALITY_SAMPLE_SIZE", 10)
+
+    df = pd.DataFrame({
+        "a": list(range(30)),
+        "target": [0, 1] * 15,
+    })
+    report = assess_data_quality(df, target_column="target")
+    assert report["n_rows"] == 10

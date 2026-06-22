@@ -124,7 +124,13 @@ class FeatureEngineer:
             feature_df, self.low_variance_threshold
         )
         reduced_df = feature_df.drop(columns=self.high_correlation_drop + self.low_variance_drop, errors="ignore")
-        if self.enable_pca and self.pca_variance_ratio is not None and not reduced_df.empty:
+        min_shape = min(reduced_df.shape)
+        if (
+            self.enable_pca
+            and self.pca_variance_ratio is not None
+            and not reduced_df.empty
+            and min_shape >= 10
+        ):
             self.pca, self.pca_columns = _learn_pca(reduced_df, self.pca_variance_ratio)
 
         logger.info(
@@ -398,8 +404,13 @@ def _learn_categorical_encodings(
     target_column: str,
     one_hot_threshold: int,
     target_encoding_threshold: int,
+    smoothing: float = 10.0,
 ) -> tuple:
-    """学习类别编码：低基数 One-Hot、高基数 Target Encoding。"""
+    """学习类别编码：低基数 One-Hot、高基数平滑 Target Encoding。
+
+    Target Encoding 使用平滑后的类别均值，避免在全局训练集上直接 fit
+    造成的数据泄露与过拟合（尤其是稀有类别）。
+    """
     one_hot_maps: Dict[str, List[Any]] = {}
     target_encodings: Dict[str, Dict[Any, float]] = {}
     global_target_mean: Optional[float] = None
@@ -417,9 +428,14 @@ def _learn_categorical_encodings(
         if n_unique <= one_hot_threshold:
             one_hot_maps[col] = df[col].dropna().unique().tolist()
         elif n_unique >= target_encoding_threshold and global_target_mean is not None:
-            # Target Encoding 仅适用于数值目标（回归/二分类）
-            encoding = df.groupby(col)[target_column].mean().to_dict()
-            target_encodings[col] = {k: float(v) for k, v in encoding.items()}
+            # 平滑 Target Encoding：category_mean * count + global_mean * smoothing
+            # ---------------------------------------------------------------
+            #                    count + smoothing
+            grouped = df.groupby(col)[target_column].agg(["mean", "count"])
+            smoothed = (
+                grouped["mean"] * grouped["count"] + global_target_mean * smoothing
+            ) / (grouped["count"] + smoothing)
+            target_encodings[col] = {k: float(v) for k, v in smoothed.to_dict().items()}
 
     return one_hot_maps, target_encodings, global_target_mean
 
