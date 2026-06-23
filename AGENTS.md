@@ -1,6 +1,7 @@
 # AGENTS.md — Prefect AutoML Platform
 
 > 本文件面向 AI 编程助手。阅读者应当被假设为对该项目一无所知。文中信息均来自实际代码与配置文件，请勿做无依据的推测。
+> 若你修改了本文件描述的文件/结构/配置/工作流，请同步更新本文件。
 
 ---
 
@@ -19,9 +20,9 @@
 项目文档：
 
 - [`README.md`](./README.md)：面向人类贡献者的快速开始与功能说明。
-- [`task.md`](./task.md)：技术 PRD（产品需求文档）。
 - [`todo.md`](./todo.md)：开发排期与实现状态。
 - 本文件：面向 AI 编码代理的工程上下文与约定。
+- 注意：`task.md` 在 README/todo 中被引用，但项目根目录目前**不存在**该文件。
 
 ---
 
@@ -42,6 +43,12 @@
 | 可解释性 | SHAP | `>=0.44.0` |
 | 报告 | Jinja2 + matplotlib + seaborn | — |
 | LLM API | openai（兼容 KIMI / DeepSeek / MiniMax / OpenAI） | `>=1.0.0` |
+| 深度学习 | torch（`pyproject.toml` 已列入，用于 NeuralNetTorch） | `>=2.0.0` |
+
+> **依赖文件注意**：
+> - `pyproject.toml` 的 `dependencies` 中已包含 `torch>=2.0.0`，并配置了 `pytorch-cpu` 索引。
+> - `requirements-core.txt` 与 `requirements.txt` 当前**未列出 torch**，与 `pyproject.toml` 存在差异；若通过 `uv pip install -r requirements-core.txt` 安装， NeuralNetTorch 可能不可用。
+> - `requirements-full.txt` 使用完整版 `autogluon>=1.1.0`，并包含 feature-engine、imbalanced-learn、shap、openai。
 
 ### 2.2 Node 前端
 
@@ -50,6 +57,7 @@
 | 框架 | Vue 3 (`^3.4.0`) |
 | 构建工具 | Vite 5 (`^5.2.0`) |
 | UI 组件库 | Element Plus (`^2.7.0`) |
+| 图标 | `@element-plus/icons-vue` (`^2.3.0`) |
 | 状态管理 | Pinia (`^2.1.0`) |
 | 路由 | Vue Router 4 (`^4.3.0`) |
 | 可视化 | ECharts (`^6.1.0`) |
@@ -61,6 +69,7 @@
 - **Node.js 18+**。
 - 推荐包管理器：**uv**（也支持 pip）。
 - 内存：最低 8GB，推荐 32GB+（模型搜索内存消耗大）。
+- 项目根目录存在 `.node/`，可用于存放本地 Node.js 运行时（Windows PowerShell 启动脚本会优先将其加入 PATH）。
 
 ---
 
@@ -71,66 +80,74 @@ prefect-project/
 ├── backend/                    # FastAPI 后端
 │   ├── main.py                 # FastAPI 入口与生命周期
 │   ├── config.py               # Pydantic Settings 配置管理
-│   ├── database.py             # SQLAlchemy 异步引擎与会话
-│   ├── models.py               # SQLAlchemy ORM 模型（Dataset / Run / Metric）
+│   ├── database.py             # SQLAlchemy 异步引擎与会话 + SQLite 轻量迁移
+│   ├── models.py               # SQLAlchemy ORM 模型（Dataset / Experiment / Trial / Run / Metric）
 │   ├── schemas.py              # Pydantic 请求/响应模型
 │   ├── routers/                # API 路由
 │   │   ├── datasets.py         # 数据集接口
-│   │   ├── runs.py             # 训练任务、预测、解释、报告接口
-│   │   └── intent.py           # 自然语言意图接口
+│   │   ├── runs.py             # 训练任务、预测、解释、报告、SSE、对比接口
+│   │   ├── intent.py           # 自然语言意图接口
+│   │   └── experiments.py      # LLM 驱动的多候选搜索实验接口
 │   ├── services/               # 业务服务层
-│   │   ├── automl.py           # AutoGluon 封装
+│   │   ├── automl.py           # AutoGluon 封装（训练、集成回退、指标映射）
 │   │   ├── training_strategy.py# 数据驱动的训练策略路由
-│   │   ├── training_executor.py# 异步训练执行器（子进程 + 信号量）
+│   │   ├── training_executor.py# 异步训练执行器（子进程 + 信号量 + SSE）
 │   │   ├── data_service.py     # 数据加载与元数据分析
 │   │   ├── schema_service.py   # Schema 推断/校验/对齐
 │   │   ├── data_quality.py     # 六维数据质量报告
-│   │   ├── preprocessing.py    # 基础清洗与特征工程
-│   │   ├── preprocessing_pipeline.py # 可序列化 DataPreprocessor
+│   │   ├── preprocessing.py    # 基础清洗与特征工程（清洗、划分、特征构造）
+│   │   ├── preprocessing_pipeline.py # 可序列化 DataPreprocessor（fit/transform/save/load）
 │   │   ├── feature_engineering.py    # 高级特征工程
 │   │   ├── sampling_service.py       # 条件采样
 │   │   ├── cv_service.py             # 显式交叉验证
 │   │   ├── explainability.py         # SHAP / Permutation Importance
 │   │   ├── visualization.py          # 报告图表
+│   │   ├── llm_client.py             # 统一 LLM 调用客户端
 │   │   ├── llm_intent_service.py     # LLM 意图解析（带降级）
+│   │   ├── llm_strategy_service.py   # LLM 策略/候选推荐
 │   │   ├── report_llm_service.py     # LLM 业务解读
+│   │   ├── search_agent.py           # LLM 驱动的多候选搜索 Agent（Experiment）
 │   │   ├── db_connection_service.py  # 数据库连接
 │   │   ├── storage.py                # 文件存储
 │   │   └── seed_data.py              # 默认 iris 数据集
 │   ├── prefect_flows/
-│   │   └── automl_flow.py      # Prefect Flow 定义
+│   │   └── automl_flow.py      # Prefect Flow 定义（含预处理 Task、CV Task、业务解读 Task）
 │   └── templates/
 │       └── report.html         # HTML 报告 Jinja2 模板
 ├── frontend/                   # Vue 3 前端
 │   ├── src/
 │   │   ├── api/index.js        # axios 实例与 API 封装
-│   │   ├── views/              # 页面视图
-│   │   ├── components/         # 公共组件
-│   │   ├── router/             # Vue Router
-│   │   ├── stores/             # Pinia store
+│   │   ├── views/              # 页面视图（Home / Datasets / Runs / RunDetail / Compare）
+│   │   ├── components/         # 公共组件（EChart.vue）
+│   │   ├── router/index.js     # Vue Router
+│   │   ├── stores/app.js       # Pinia store
 │   │   ├── App.vue
 │   │   └── main.js
 │   ├── package.json
 │   └── vite.config.js
 ├── scripts/                    # 运维与工具脚本
 │   ├── check_env.py            # 环境检查
-│   ├── run_dev.sh / .bat / .ps1 # 开发一键启动
-│   ├── run_prod.sh             # 生产启动
+│   ├── run_dev.sh              # Linux/macOS 开发一键启动
+│   ├── run_dev.ps1             # Windows PowerShell 开发一键启动
+│   ├── run_prod.sh             # 生产启动（Linux/macOS）
 │   ├── run_prod_stop.sh        # 停止生产服务
 │   └── run_flow.py             # 独立运行 Prefect Flow
-├── tests/                      # pytest 测试
+├── tests/                      # pytest 测试（21 个 test_*.py + __init__.py）
 ├── data/                       # 上传数据、模型、报告、默认数据集
-│   ├── default/                # 默认数据集（如 iris.csv）
+│   ├── default/                # 默认数据集（iris.csv）
 │   ├── uploads/                # 上传文件
 │   ├── models/                 # 保存的模型
 │   └── reports/                # 训练产物与 HTML 报告
+├── .prefect/                   # Prefect 本地无服务器模式数据
+├── .node/                      # 可选的本地 Node.js 运行时
 ├── pyproject.toml              # 项目元数据、依赖与工具配置
 ├── requirements-core.txt       # 核心依赖（CPU 版，无 torch/fastai）
 ├── requirements-full.txt       # 完整依赖（含 torch/fastai/NN/LLM）
 ├── requirements.txt            # 当前与 requirements-core.txt 内容一致
 ├── Makefile                    # 常用命令快捷方式
 ├── .env.example                # 环境变量示例
-└── README.md
+├── README.md
+└── todo.md
 ```
 
 ---
@@ -147,11 +164,14 @@ uv venv --python 3.12
 source .venv/bin/activate
 # Windows: .venv\Scripts\activate
 
-# 核心依赖（CPU 版 AutoGluon，安装更快）
+# 核心依赖（CPU 版 AutoGluon，安装更快；注意不含 torch）
 uv pip install -r requirements-core.txt
 
 # 完整依赖（含 torch / fastai / NN / LLM API）
 uv pip install -r requirements-full.txt
+
+# 或直接从 pyproject.toml 安装（含 torch CPU 版）
+uv pip install -e .
 ```
 
 pip 方式也可行，但项目 README 与 Makefile 默认以 uv 为主。
@@ -184,10 +204,7 @@ npm run dev
 # Linux/macOS
 bash scripts/run_dev.sh
 
-# Windows CMD
-scripts\run_dev.bat
-
-# Windows PowerShell
+# Windows PowerShell（需允许执行脚本）
 .\scripts\run_dev.ps1
 ```
 
@@ -221,7 +238,7 @@ make test          # 运行测试（跳过慢速）
 make test-slow     # 运行全部测试
 make lint          # ruff 静态检查
 make format        # black 格式化
-make dev           # 开发启动
+make dev           # 开发启动（Linux/macOS）
 make start         # 生产启动
 make stop          # 停止生产服务
 make clean         # 清理缓存
@@ -237,7 +254,7 @@ make clean         # 清理缓存
 - 标记：
   - `@pytest.mark.slow`：端到端训练等慢速测试。
   - 默认 `make test` 会跳过这些测试。
-- 测试文件位于 `tests/`，共 19 个测试/数据文件。
+- 测试文件位于 `tests/`，共 21 个 `test_*.py` 文件（加上 `__init__.py` 共 22 个 Python 文件）。
 
 ### 5.2 常用测试命令
 
@@ -280,6 +297,11 @@ make test-slow
 | `test_report_llm_service.py` | 业务解读 |
 | `test_db_connection.py` | 数据库连接 |
 | `test_predict_threshold.py` | 阈值预测 |
+| `test_experiments.py` | 实验/ Trial 接口 |
+| `test_agent_services.py` | Agent 候选推荐 |
+| `test_auto_inference.py` | 目标列/任务类型自动推断 |
+| `test_business_rules.py` | 业务规则提取 |
+| `test_optimization_defaults.py` | 性能优化默认值 |
 
 ---
 
@@ -301,7 +323,7 @@ mypy backend
 ### 6.2 JavaScript / Vue
 
 - 前端使用 Vite 内置 ESLint 配置（`npm run lint`）。
-- Vue 单文件组件使用 Composition API 风格。
+- Vue 单文件组件使用 Composition API 风格（`<script setup>`）。
 
 ### 6.3 命名与注释
 
@@ -319,27 +341,40 @@ mypy backend
 - 见 `backend/main.py`、`scripts/run_flow.py`、`backend/prefect_flows/automl_flow.py` 顶部的 `os.environ.setdefault("PREFECT_API_URL", "")`。
 - Flow：`automl_pipeline`（`@flow(name="automl-end-to-end", log_prints=True)`）。
 - 关键 Task：
-  - `load_data_task`：按文件路径 + mtime 缓存。
-  - `build_strategy_task`：数据驱动策略，带缓存。
+  - `load_data_task`：按文件路径 + mtime 缓存，retries=2。
+  - `validate_schema_task`：校验目标列存在性。
+  - `analyze_metadata_task`：元数据分析。
+  - `assess_data_quality_task`：六维数据质量评估（失败不影响主流程）。
+  - `build_strategy_task`：数据驱动策略，带缓存，合并 Agent 候选配置。
+  - `split_data_task`：严格划分 train/val/test。
+  - `cross_validate_task`：显式交叉验证（可选，失败不影响主流程）。
+  - `fit_preprocessor_task` / `transform_data_task` / `persist_preprocessor_task`：预处理 Pipeline 的 fit/transform/save。
+  - `build_sampling_strategy_task` / `apply_sampling_task`：条件采样。
   - `train_model_task`：超时 3 小时。
-  - `evaluate_model_task`：超时 1 小时。
+  - `evaluate_model_task`：超时 1 小时，生成 val/test/train 指标、扩展指标、阈值、集成验证。
+  - `generate_business_interpretation_task`：LLM 业务解读（可选，失败不影响主流程）。
+  - `create_artifacts_task`：Prefect Artifact（排行榜、特征重要性、策略、数据质量摘要）。
+  - `generate_report_task`：HTML 报告。
 
 ### 7.2 防止数据泄露
 
 - **训练/测试划分必须在预处理之前完成**。
-- `DataPreprocessor` 只在 `train_df_raw` 上 `fit`，然后对测试集 `transform`。
+- `DataPreprocessor` 只在 `train_df_raw` 上 `fit`，然后对验证集/测试集 `transform`。
 - CV 在原始训练数据上运行，预处理器封装在 sklearn `Pipeline` 内部。
 - 采样（SMOTE 等）只在训练集应用。
 
 ### 7.3 异步训练执行器
 
-- `backend/services/training_executor.py` 中的 `TrainingExecutor` 在独立子进程中运行 `scripts/run_flow.py`。
+- `backend/services/training_executor.py` 中的 `TrainingExecutor` 在独立后台事件循环线程中通过子进程运行 `scripts/run_flow.py`。
 - 使用 `asyncio.Semaphore` 控制最大并发，默认 **2** 个并发训练任务。
 - FastAPI 主服务保持非阻塞。
+- 支持 SSE（`GET /api/runs/{id}/events`）实时推送状态变化。
+- 子进程日志会过滤 Prefect 内部 `EventsWorker` 等噪音。
+- 全局超时后尝试 Best-so-far：若 `autogluon_models` 目录存在部分模型，则标记为 completed 并告警产物可能不完整。
 
 ### 7.4 降级与容错
 
-- LLM 服务（意图解析、业务解读）未配置 API 密钥或调用失败时，自动降级到规则引擎。
+- LLM 服务（意图解析、业务解读、候选推荐）未配置 API 密钥或调用失败时，自动降级到规则引擎。
 - SHAP 失败时回退到 `shap.Explainer`。
 - 采样失败时回退到 `RandomOverSampler`。
 - Ensemble 提升不足 2% 时回退到最佳单模型。
@@ -351,6 +386,7 @@ mypy backend
 - 训练产物：`data/reports/{run_id}/`
 - 默认数据集：`data/default/`
 - 数据库：`data/db.sqlite`
+- Prefect 本地数据：`.prefect/`
 - 目录由 `backend/config.py` 在导入时自动创建。
 
 ### 7.6 配置管理
@@ -368,6 +404,13 @@ mypy backend
     - `PERMUTATION_IMPORTANCE_ENABLED` / `PERMUTATION_IMPORTANCE_MAX_REPEATS` / `PERMUTATION_IMPORTANCE_SAMPLE_SIZE`：Permutation Importance（`n_classes > 50` 时自动 `n_repeats=2` 并采样 500 行）。
     - `DATA_QUALITY_MAX_ROWS`：数据质量评估采样（`n_samples > 100_000` 时自动采样 50_000 行）。
     - 训练策略：`n_classes > 50` 时自动限制 GBM/XGB 树量（GBM `n_estimators<=1000`，XGB `n_estimators<=500`）。
+
+### 7.7 实验（Experiment）与搜索 Agent
+
+- `backend/services/search_agent.py` 实现 LLM 驱动的多候选搜索。
+- 通过内部 HTTP 客户端（ASGI Transport）调用 `/api/runs` 复用现有训练逻辑，避免与 routers 循环依赖。
+- 涉及 ORM 表：`experiments`、`trials`。
+- `experiments` 记录实验状态与最佳 Run；`trials` 记录每次候选运行及其 val/test 分数。
 
 ---
 
@@ -395,7 +438,9 @@ DELETE /api/datasets/{id}
 ```text
 POST   /api/runs
 GET    /api/runs
+POST   /api/runs/compare
 GET    /api/runs/{id}
+GET    /api/runs/{id}/events          # SSE 实时状态推送
 GET    /api/runs/{id}/results
 GET    /api/runs/{id}/report
 GET    /api/runs/{id}/report?download=1
@@ -405,6 +450,16 @@ POST   /api/runs/{id}/predict
 POST   /api/runs/{id}/predict/batch
 POST   /api/runs/{id}/explain
 DELETE /api/runs/{id}
+```
+
+### 实验
+
+```text
+POST   /api/experiments
+GET    /api/experiments
+GET    /api/experiments/{id}
+GET    /api/experiments/{id}/trials
+GET    /api/experiments/{id}/best-run
 ```
 
 ### 意图理解
@@ -442,11 +497,14 @@ POST   /api/intent/schema
 
 1. **修改后端代码后**，优先运行 `pytest tests -m "not slow" -v` 验证。
 2. **修改 Flow/Task 后**，注意 `PREFECT_API_URL` 必须在 `import prefect` 之前设置。
-3. **新增依赖**时，同时更新 `pyproject.toml`、`requirements-core.txt`、`requirements-full.txt`，并保持 `requirements.txt` 与核心依赖一致。
+3. **新增依赖**时，同时更新 `pyproject.toml`、`requirements-core.txt`、`requirements-full.txt`，并保持 `requirements.txt` 与核心依赖一致；注意 `pyproject.toml` 与 `requirements-core.txt` 当前对 torch 的处理不一致。
 4. **新增配置**时，优先加入 `backend/config.py` 的 `Settings` 类，并在 `.env.example` 中给出示例。
-5. **新增数据库字段**时，同步更新 `backend/models.py`、`backend/schemas.py` 以及前端对应视图。
+5. **新增数据库字段**时，同步更新 `backend/models.py`、`backend/schemas.py` 以及前端对应视图；SQLite 开发环境可通过 `database.py` 的轻量迁移自动补齐列。
 6. **修改报告模板**时，检查 `backend/templates/report.html` 与 `backend/services/visualization.py` 的 base64 图表输出是否匹配。
 7. **任何涉及训练/测试划分、采样、编码的改动**，必须确保遵循“fit on train, transform on test”原则，避免数据泄露。
+8. **修改 requirements 文件后**，注意 `Makefile` 与 README 中的安装说明是否仍准确。
+9. **Windows 开发**：优先使用 `scripts/run_dev.ps1`；不存在等价的 `.bat` 脚本。
+10. **新增 Router**：不要忘记在 `backend/main.py` 中 `app.include_router(...)` 注册。
 
 ---
 
@@ -458,10 +516,11 @@ POST   /api/intent/schema
 | `Makefile` | 常用命令封装 |
 | `backend/config.py` | 应用配置与 `.env` 加载 |
 | `backend/main.py` | FastAPI 入口 |
-| `backend/database.py` | 异步数据库引擎 |
+| `backend/database.py` | 异步数据库引擎与 SQLite 轻量迁移 |
 | `backend/models.py` | ORM 模型 |
 | `backend/schemas.py` | Pydantic 模型 |
 | `backend/prefect_flows/automl_flow.py` | Prefect Flow 主流程 |
 | `backend/services/training_executor.py` | 异步训练执行器 |
+| `backend/services/search_agent.py` | LLM 多候选搜索 Agent |
 | `frontend/vite.config.js` | Vite 配置与 API 代理 |
 | `.env.example` | 环境变量示例 |
