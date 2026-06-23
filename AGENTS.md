@@ -81,17 +81,19 @@ prefect-project/
 │   ├── main.py                 # FastAPI 入口与生命周期
 │   ├── config.py               # Pydantic Settings 配置管理
 │   ├── database.py             # SQLAlchemy 异步引擎与会话 + SQLite 轻量迁移
-│   ├── models.py               # SQLAlchemy ORM 模型（Dataset / Experiment / Trial / Run / Metric）
+│   ├── models.py               # SQLAlchemy ORM 模型（Dataset / Experiment / Trial / Run / RunStep / Metric）
 │   ├── schemas.py              # Pydantic 请求/响应模型
 │   ├── routers/                # API 路由
 │   │   ├── datasets.py         # 数据集接口
-│   │   ├── runs.py             # 训练任务、预测、解释、报告、SSE、对比接口
+│   │   ├── runs.py             # 训练任务、预测、解释、报告、SSE、对比、原子步骤接口
 │   │   ├── intent.py           # 自然语言意图接口
 │   │   └── experiments.py      # LLM 驱动的多候选搜索实验接口
 │   ├── services/               # 业务服务层
 │   │   ├── automl.py           # AutoGluon 封装（训练、集成回退、指标映射）
 │   │   ├── training_strategy.py# 数据驱动的训练策略路由
-│   │   ├── training_executor.py# 异步训练执行器（子进程 + 信号量 + SSE）
+│   │   ├── step_runner.py      # 原子步骤执行器（ingest → report，共 13 步）
+│   │   ├── step_manifest.py    # 步骤产物路径与 manifest 管理
+│   │   ├── training_executor.py# 异步训练执行器（子进程 + 信号量 + SSE，支持单步/全量）
 │   │   ├── data_service.py     # 数据加载与元数据分析
 │   │   ├── schema_service.py   # Schema 推断/校验/对齐
 │   │   ├── data_quality.py     # 六维数据质量报告
@@ -111,16 +113,17 @@ prefect-project/
 │   │   ├── storage.py                # 文件存储
 │   │   └── seed_data.py              # 默认 iris 数据集
 │   ├── prefect_flows/
-│   │   └── automl_flow.py      # Prefect Flow 定义（含预处理 Task、CV Task、业务解读 Task）
+│   │   └── automl_flow.py      # Prefect Flow 定义（保留，供实验/旧入口使用）
 │   └── templates/
 │       └── report.html         # HTML 报告 Jinja2 模板
 ├── frontend/                   # Vue 3 前端
 │   ├── src/
 │   │   ├── api/index.js        # axios 实例与 API 封装
-│   │   ├── views/              # 页面视图（Home / Datasets / Runs / RunDetail / Compare）
+│   │   ├── views/              # 页面视图（Home / Datasets / Runs / RunDetail / Compare / Pipeline）
 │   │   ├── components/         # 公共组件（EChart.vue）
 │   │   ├── router/index.js     # Vue Router
-│   │   ├── stores/app.js       # Pinia store
+│   │   ├── stores/app.js       # Pinia store（全局 loading/error）
+│   │   ├── stores/pipeline.js  # Pipeline 步骤状态 store
 │   │   ├── App.vue
 │   │   └── main.js
 │   ├── package.json
@@ -335,26 +338,16 @@ mypy backend
 
 ## 7. 开发约定与架构重点
 
-### 7.1 Prefect 编排模式
+### 7.1 原子步骤编排模式
 
 - `PREFECT_API_URL=""` 必须在导入 Prefect 前设置，强制本地无服务器模式。
-- 见 `backend/main.py`、`scripts/run_flow.py`、`backend/prefect_flows/automl_flow.py` 顶部的 `os.environ.setdefault("PREFECT_API_URL", "")`。
-- Flow：`automl_pipeline`（`@flow(name="automl-end-to-end", log_prints=True)`）。
-- 关键 Task：
-  - `load_data_task`：按文件路径 + mtime 缓存，retries=2。
-  - `validate_schema_task`：校验目标列存在性。
-  - `analyze_metadata_task`：元数据分析。
-  - `assess_data_quality_task`：六维数据质量评估（失败不影响主流程）。
-  - `build_strategy_task`：数据驱动策略，带缓存，合并 Agent 候选配置。
-  - `split_data_task`：严格划分 train/val/test。
-  - `cross_validate_task`：显式交叉验证（可选，失败不影响主流程）。
-  - `fit_preprocessor_task` / `transform_data_task` / `persist_preprocessor_task`：预处理 Pipeline 的 fit/transform/save。
-  - `build_sampling_strategy_task` / `apply_sampling_task`：条件采样。
-  - `train_model_task`：超时 3 小时。
-  - `evaluate_model_task`：超时 1 小时，生成 val/test/train 指标、扩展指标、阈值、集成验证。
-  - `generate_business_interpretation_task`：LLM 业务解读（可选，失败不影响主流程）。
-  - `create_artifacts_task`：Prefect Artifact（排行榜、特征重要性、策略、数据质量摘要）。
-  - `generate_report_task`：HTML 报告。
+- 见 `backend/main.py`、`scripts/run_flow.py`、`scripts/run_step.py`、`backend/prefect_flows/automl_flow.py` 顶部的 `os.environ.setdefault("PREFECT_API_URL", "")`。
+- 流水线已拆分为 13 个原子步骤，定义在 `backend/services/step_runner.py` 的 `STEP_ORDER`：
+  `ingest → analyze → quality → strategy → split → cross_validate → fit_preprocessor → transform → sample → train → evaluate → interpret → report`。
+- 每个步骤独立可执行、可重试、可观测；中间产物通过 Parquet/JSON/joblib 落地到 `data/reports/{run_id}/`。
+- `scripts/run_step.py` 是单步/全量执行入口：`--step <name>` 执行单步，`--step all` 顺序执行全部。
+- 一键训练模式等价于 `run_step.py --step all`，由 `TrainingExecutor` 在子进程中调度。
+- `automl_pipeline` Prefect Flow 仍保留，主要用于实验/旧入口兼容；新增功能优先在 `StepRunner` 中实现。
 
 ### 7.2 防止数据泄露
 
@@ -365,10 +358,11 @@ mypy backend
 
 ### 7.3 异步训练执行器
 
-- `backend/services/training_executor.py` 中的 `TrainingExecutor` 在独立后台事件循环线程中通过子进程运行 `scripts/run_flow.py`。
+- `backend/services/training_executor.py` 中的 `TrainingExecutor` 在独立后台事件循环线程中通过子进程运行 `scripts/run_step.py`。
+- 支持两种提交方式：`submit_sync(step="all")` 一键训练，`submit_step_sync(step="<name>")` 单步执行。
 - 使用 `asyncio.Semaphore` 控制最大并发，默认 **2** 个并发训练任务。
 - FastAPI 主服务保持非阻塞。
-- 支持 SSE（`GET /api/runs/{id}/events`）实时推送状态变化。
+- 支持 SSE（`GET /api/runs/{id}/events`）实时推送状态变化，事件 payload 可携带 `step` 字段。
 - 子进程日志会过滤 Prefect 内部 `EventsWorker` 等噪音。
 - 全局超时后尝试 Best-so-far：若 `autogluon_models` 目录存在部分模型，则标记为 completed 并告警产物可能不完整。
 
@@ -436,10 +430,14 @@ DELETE /api/datasets/{id}
 ### 训练任务
 
 ```text
-POST   /api/runs
+POST   /api/runs                      # mode=auto|step，step 仅创建草稿
 GET    /api/runs
 POST   /api/runs/compare
 GET    /api/runs/{id}
+GET    /api/runs/{id}/steps           # 获取所有原子步骤状态
+POST   /api/runs/{id}/steps/{name}    # 执行单个步骤
+POST   /api/runs/{id}/continue        # 继续下一个 pending/failed 步骤
+GET    /api/runs/{id}/artifacts/{name}# 获取中间产物（JSON/文件）
 GET    /api/runs/{id}/events          # SSE 实时状态推送
 GET    /api/runs/{id}/results
 GET    /api/runs/{id}/report
@@ -519,8 +517,11 @@ POST   /api/intent/schema
 | `backend/database.py` | 异步数据库引擎与 SQLite 轻量迁移 |
 | `backend/models.py` | ORM 模型 |
 | `backend/schemas.py` | Pydantic 模型 |
-| `backend/prefect_flows/automl_flow.py` | Prefect Flow 主流程 |
+| `backend/prefect_flows/automl_flow.py` | Prefect Flow 主流程（保留兼容） |
+| `backend/services/step_runner.py` | 原子步骤执行器 |
+| `backend/services/step_manifest.py` | 步骤产物路径管理 |
 | `backend/services/training_executor.py` | 异步训练执行器 |
+| `scripts/run_step.py` | 单步/全量执行入口 |
 | `backend/services/search_agent.py` | LLM 多候选搜索 Agent |
 | `frontend/vite.config.js` | Vite 配置与 API 代理 |
 | `.env.example` | 环境变量示例 |

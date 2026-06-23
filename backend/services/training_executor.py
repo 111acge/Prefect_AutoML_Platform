@@ -42,6 +42,8 @@ class TrainingJob:
     cleaning_rules: Dict[str, Any] | None = None
     feature_engineering_enabled: bool = True
     candidate_config: Dict[str, Any] | None = None
+    # None 表示端到端执行；否则为单步名称
+    step: str | None = None
     process: asyncio.subprocess.Process | None = None
     status: str = "pending"
     error_message: str | None = None
@@ -102,14 +104,22 @@ class TrainingExecutor:
             if not subs:
                 self._status_subscribers.pop(run_id, None)
 
-    def _notify_status(self, run_id: str, status: str, error_message: str | None = None) -> None:
-        """通知所有订阅者状态变化。"""
+    def _notify_status(
+        self,
+        run_id: str,
+        status: str,
+        error_message: str | None = None,
+        step: str | None = None,
+    ) -> None:
+        """通知所有订阅者状态变化，可选携带当前步骤信息。"""
         subs = self._status_subscribers.get(run_id)
         if not subs:
             return
         data = {"status": status}
         if error_message is not None:
             data["error_message"] = error_message
+        if step is not None:
+            data["step"] = step
         for q in list(subs):
             try:
                 q.put_nowait(data)
@@ -137,6 +147,7 @@ class TrainingExecutor:
             cleaning_rules=kwargs.get("cleaning_rules"),
             feature_engineering_enabled=kwargs.get("feature_engineering_enabled", True),
             candidate_config=kwargs.get("candidate_config"),
+            step=kwargs.get("step"),
         )
         self._jobs[run_id] = job
 
@@ -161,6 +172,7 @@ class TrainingExecutor:
             cleaning_rules=kwargs.get("cleaning_rules"),
             feature_engineering_enabled=kwargs.get("feature_engineering_enabled", True),
             candidate_config=kwargs.get("candidate_config"),
+            step=kwargs.get("step"),
         )
         self._jobs[run_id] = job
 
@@ -168,6 +180,10 @@ class TrainingExecutor:
             self._run_with_semaphore(job), self._loop
         )
         return job
+
+    def submit_step_sync(self, **kwargs: Any) -> TrainingJob:
+        """在独立后台事件循环中提交单步执行任务（线程安全）。"""
+        return self.submit_sync(**kwargs)
 
     async def _run_with_semaphore(self, job: TrainingJob) -> None:
         """在信号量控制下执行任务。"""
@@ -180,6 +196,7 @@ class TrainingExecutor:
         status: str,
         error_message: str | None = None,
         set_completed: bool = False,
+        step: str | None = None,
     ) -> None:
         """异步更新任务状态。"""
         async with AsyncSessionLocal() as db:
@@ -195,7 +212,7 @@ class TrainingExecutor:
             await db.commit()
 
         # 通知 SSE 订阅者
-        self._notify_status(run_id, status, error_message)
+        self._notify_status(run_id, status, error_message, step=step)
 
     def _read_error_message(self, output_dir: Path) -> str | None:
         """读取子进程写入的 error.json，获取真实失败原因。"""
@@ -254,35 +271,19 @@ class TrainingExecutor:
         job.output_dir.mkdir(parents=True, exist_ok=True)
         log_path = job.output_dir / "training.log"
 
-        script_path = settings.project_root / "scripts" / "run_flow.py"
+        # 完全原子化执行：使用 run_step.py
+        script_path = settings.project_root / "scripts" / "run_step.py"
+        step_arg = job.step if job.step is not None else "all"
         cmd = [
             sys.executable,
             str(script_path),
-            "--file-path",
-            job.file_path,
-            "--target-column",
-            job.target_column,
-            "--task-type",
-            job.task_type,
+            "--run-id",
+            job.run_id,
             "--output-dir",
             str(job.output_dir),
-            "--time-budget-minutes",
-            # None 用 -1 作为哨兵传给脚本，脚本内再转回 None
-            str(job.time_budget_minutes if job.time_budget_minutes is not None else -1),
-            "--preset",
-            job.preset,
+            "--step",
+            step_arg,
         ]
-        if job.primary_metric:
-            cmd.extend(["--primary-metric", job.primary_metric])
-        if job.seed is not None:
-            cmd.extend(["--seed", str(job.seed)])
-        cmd.extend(["--max-models", str(job.max_models)])
-        if not job.feature_engineering_enabled:
-            cmd.append("--no-feature-engineering")
-        if job.cleaning_rules:
-            cmd.extend(["--cleaning-rules", json.dumps(job.cleaning_rules, ensure_ascii=False)])
-        if job.candidate_config:
-            cmd.extend(["--candidate-config", json.dumps(job.candidate_config, ensure_ascii=False)])
 
         env = os.environ.copy()
         env["PREFECT_API_URL"] = ""

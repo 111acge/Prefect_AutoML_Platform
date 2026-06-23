@@ -120,6 +120,123 @@ def test_create_run(default_dataset, monkeypatch):
     assert data["dataset_id"] == default_dataset.id
 
 
+def test_create_run_step_mode(default_dataset):
+    """测试分步 Pipeline 模式创建运行。"""
+    response = client.post(
+        "/api/runs",
+        json={
+            "dataset_id": default_dataset.id,
+            "target_column": "target",
+            "task_type": "multiclass_classification",
+            "time_budget_minutes": 0.1,
+            "preset": "medium_quality",
+            "mode": "step",
+        },
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["status"] == "pending"
+
+    run_id = data["id"]
+    output_dir = Path(data["output_dir"])
+
+    # 应创建运行上下文
+    assert (output_dir / "run_context.json").exists()
+
+    # 应创建所有步骤记录
+    steps_response = client.get(f"/api/runs/{run_id}/steps")
+    assert steps_response.status_code == 200
+    steps = steps_response.json()
+    assert len(steps) == 13
+    assert all(s["status"] == "pending" for s in steps)
+    assert steps[0]["step_name"] == "ingest"
+    assert steps[-1]["step_name"] == "report"
+
+
+def test_execute_run_step(default_dataset, monkeypatch):
+    """测试单步执行接口。"""
+    from services.training_executor import training_executor
+
+    submitted = {}
+
+    def _mock_submit_step_sync(**kwargs):
+        submitted["step"] = kwargs.get("step")
+        submitted["run_id"] = kwargs.get("run_id")
+        return None
+
+    monkeypatch.setattr(training_executor, "submit_step_sync", _mock_submit_step_sync)
+
+    # 先创建 step 模式运行
+    response = client.post(
+        "/api/runs",
+        json={
+            "dataset_id": default_dataset.id,
+            "target_column": "target",
+            "task_type": "multiclass_classification",
+            "time_budget_minutes": 0.1,
+            "preset": "medium_quality",
+            "mode": "step",
+        },
+    )
+    run_id = response.json()["id"]
+
+    response = client.post(f"/api/runs/{run_id}/steps/ingest")
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["step_name"] == "ingest"
+    assert submitted["step"] == "ingest"
+    assert submitted["run_id"] == run_id
+
+
+def test_continue_run(default_dataset, monkeypatch):
+    """测试 continue 接口自动找到第一个 pending 步骤。"""
+    from services.training_executor import training_executor
+
+    submitted = {}
+
+    def _mock_submit_step_sync(**kwargs):
+        submitted["step"] = kwargs.get("step")
+        return None
+
+    monkeypatch.setattr(training_executor, "submit_step_sync", _mock_submit_step_sync)
+
+    response = client.post(
+        "/api/runs",
+        json={
+            "dataset_id": default_dataset.id,
+            "target_column": "target",
+            "task_type": "multiclass_classification",
+            "time_budget_minutes": 0.1,
+            "preset": "medium_quality",
+            "mode": "step",
+        },
+    )
+    run_id = response.json()["id"]
+
+    response = client.post(f"/api/runs/{run_id}/continue", json={})
+    assert response.status_code == 200, response.text
+    assert submitted["step"] == "ingest"
+
+
+def test_get_artifact_not_found(default_dataset):
+    """测试产物接口对不存在产物的处理。"""
+    response = client.post(
+        "/api/runs",
+        json={
+            "dataset_id": default_dataset.id,
+            "target_column": "target",
+            "task_type": "multiclass_classification",
+            "time_budget_minutes": 0.1,
+            "preset": "medium_quality",
+            "mode": "step",
+        },
+    )
+    run_id = response.json()["id"]
+
+    response = client.get(f"/api/runs/{run_id}/artifacts/metrics")
+    assert response.status_code == 404
+
+
 def test_upload_dataset_auto_inference():
     """上传时未指定目标列/任务类型，系统自动推断并写入数据集。"""
     csv_content = "id,feat1,feat2,label\n1,0.1,0.2,0\n2,0.3,0.4,1\n3,0.5,0.6,0\n4,0.7,0.8,1\n"

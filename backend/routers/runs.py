@@ -16,11 +16,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from database import get_db
-from models import Dataset, Run
+from models import Dataset, Run, RunStep
+
+logger = logging.getLogger(__name__)
 from schemas import (
     RunCreate,
     RunResponse,
     RunResult,
+    RunStepResponse,
+    StepExecutionRequest,
     PredictionRequest,
     PredictionResponse,
     ExplainRequest,
@@ -31,6 +35,8 @@ from schemas import (
 )
 from services.data_service import load_dataframe
 from services.storage import storage_service
+from services.step_manifest import StepManifest
+from services.step_runner import STEP_ORDER, initialize_run_steps
 from services.training_executor import training_executor
 from services.schema_service import build_schema_from_file, validate_against_schema
 
@@ -208,10 +214,24 @@ async def create_run(
             existing_drops = set(cleaning_rules.get("drop_columns", []))
             existing_drops.update(id_columns)
             cleaning_rules["drop_columns"] = list(existing_drops)
-            logger = logging.getLogger(__name__)
             logger.info(f"运行 {run.id} 自动剔除 ID-like 列: {id_columns}")
 
-        # 提交到异步训练执行器，避免阻塞 FastAPI worker
+        # 初始化运行上下文（step 模式需要；auto 模式由 ingest 步骤创建）
+        run_context = {
+            "target_column": target_column,
+            "task_type": task_type,
+            "seed": request.seed,
+            "file_path": dataset.file_path,
+        }
+
+        if request.mode == "step":
+            # 仅创建草稿与步骤记录，不启动训练
+            await initialize_run_steps(run.id, str(output_dir), run_context)
+            run.status = "pending"
+            await db.commit()
+            return run
+
+        # 自动模式：顺序执行所有步骤
         training_executor.submit_sync(
             run_id=run.id,
             file_path=dataset.file_path,
@@ -228,6 +248,7 @@ async def create_run(
             candidate_config=(
                 request.candidate_config.model_dump() if request.candidate_config else None
             ),
+            step="all",
         )
 
         return run
@@ -262,6 +283,7 @@ def _build_config_snapshot(dataset: Dataset, request: RunCreate) -> Dict[str, An
         "primary_metric": request.primary_metric,
         "seed": request.seed,
         "time_budget_minutes": request.time_budget_minutes,
+        "dataset_file_path": dataset.file_path,
     }
 
 
@@ -419,6 +441,190 @@ async def get_run(run_id: str, db: AsyncSession = Depends(get_db)):
     if not run:
         raise HTTPException(status_code=404, detail="任务不存在")
     return run
+
+
+@router.get("/{run_id}/steps", response_model=List[RunStepResponse])
+async def list_run_steps(run_id: str, db: AsyncSession = Depends(get_db)):
+    """获取任务的所有原子步骤状态。"""
+    result = await db.execute(select(Run).where(Run.id == run_id))
+    run = result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    result = await db.execute(
+        select(RunStep).where(RunStep.run_id == run_id).order_by(RunStep.sequence)
+    )
+    steps = result.scalars().all()
+    return steps
+
+
+@router.post("/{run_id}/steps/{step_name}", response_model=RunStepResponse)
+async def execute_run_step(
+    run_id: str,
+    step_name: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """执行单个步骤。"""
+    if step_name not in STEP_ORDER:
+        raise HTTPException(status_code=400, detail=f"未知步骤: {step_name}")
+
+    result = await db.execute(select(Run).where(Run.id == run_id))
+    run = result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    step_result = await db.execute(
+        select(RunStep).where(RunStep.run_id == run_id, RunStep.step_name == step_name)
+    )
+    step = step_result.scalar_one_or_none()
+    if step is not None and step.status == "running":
+        raise HTTPException(status_code=409, detail=f"步骤 {step_name} 正在执行中")
+
+    # 提交单步任务到执行器
+    config = run.config or {}
+    snapshot = config.get("snapshot", {})
+    cleaning_rules = snapshot.get("cleaning_rules") or {}
+    id_columns = _get_id_columns_to_drop(snapshot.get("dataset_schema_info"))
+    if id_columns:
+        existing_drops = set(cleaning_rules.get("drop_columns", []))
+        existing_drops.update(id_columns)
+        cleaning_rules["drop_columns"] = list(existing_drops)
+
+    # 从数据集记录或快照中解析文件路径
+    dataset_result = await db.execute(select(Dataset).where(Dataset.id == run.dataset_id))
+    dataset = dataset_result.scalar_one_or_none()
+    file_path = (dataset.file_path if dataset else None) or snapshot.get("dataset_file_path")
+
+    training_executor.submit_step_sync(
+        run_id=run.id,
+        file_path=file_path,
+        target_column=snapshot.get("target_column"),
+        task_type=snapshot.get("task_type"),
+        output_dir=run.output_dir,
+        time_budget_minutes=run.time_budget_minutes,
+        preset=snapshot.get("preset"),
+        primary_metric=run.primary_metric,
+        seed=snapshot.get("seed"),
+        max_models=snapshot.get("max_models", 50),
+        cleaning_rules=cleaning_rules,
+        feature_engineering_enabled=snapshot.get("feature_engineering_enabled", True),
+        candidate_config=config.get("candidate_config"),
+        step=step_name,
+    )
+
+    # 立即返回步骤记录（状态会在执行完成后异步更新）
+    if step is None:
+        step = RunStep(
+            run_id=run_id,
+            step_name=step_name,
+            status="pending",
+            sequence=STEP_ORDER.index(step_name),
+        )
+        db.add(step)
+        await db.commit()
+        await db.refresh(step)
+    return step
+
+
+@router.post("/{run_id}/continue", response_model=RunStepResponse)
+async def continue_run(
+    run_id: str,
+    request: StepExecutionRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """继续执行下一个待完成的步骤。
+
+    如果请求体指定 step_name，则执行该步骤；否则自动找到第一个 pending 步骤。
+    """
+    result = await db.execute(select(Run).where(Run.id == run_id))
+    run = result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    if request.step_name:
+        target_step = request.step_name
+        if target_step not in STEP_ORDER:
+            raise HTTPException(status_code=400, detail=f"未知步骤: {target_step}")
+    else:
+        result = await db.execute(
+            select(RunStep)
+            .where(RunStep.run_id == run_id)
+            .order_by(RunStep.sequence)
+        )
+        steps = result.scalars().all()
+        target_step = None
+        for step in steps:
+            if step.status in ("pending", "failed"):
+                target_step = step.step_name
+                break
+        if target_step is None:
+            raise HTTPException(status_code=400, detail="所有步骤已完成")
+
+    return await execute_run_step(run_id, target_step, db)
+
+
+@router.get("/{run_id}/artifacts/{artifact_name}")
+async def get_artifact(run_id: str, artifact_name: str, db: AsyncSession = Depends(get_db)):
+    """获取中间产物。
+
+    artifact_name 支持：
+    - JSON 产物：metadata, quality_report, strategy, cv_results, metrics, interpretation
+    - 文件产物：report, preprocessor, feature_columns, raw, train_raw, val_raw, test_raw,
+      train_transformed, val_transformed, test_transformed, sampled_train,
+      leaderboard, feature_importance, permutation_importance
+    """
+    result = await db.execute(select(Run).where(Run.id == run_id))
+    run = result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    manifest = StepManifest(run.output_dir)
+    json_artifacts = {
+        "metadata": manifest.metadata_path,
+        "quality_report": manifest.quality_report_path,
+        "strategy": manifest.strategy_path,
+        "cv_results": manifest.cv_results_path,
+        "metrics": manifest.metrics_path,
+        "interpretation": manifest.interpretation_path,
+    }
+    file_artifacts = {
+        "report": manifest.report_path,
+        "preprocessor": manifest.preprocessor_path,
+        "feature_columns": manifest.feature_columns_path,
+        "raw": manifest.raw_data_path,
+        "train_raw": manifest.train_raw_path,
+        "val_raw": manifest.val_raw_path,
+        "test_raw": manifest.test_raw_path,
+        "train_transformed": manifest.train_transformed_path,
+        "val_transformed": manifest.val_transformed_path,
+        "test_transformed": manifest.test_transformed_path,
+        "sampled_train": manifest.sampled_train_path,
+        "leaderboard": manifest.leaderboard_path,
+        "feature_importance": manifest.feature_importance_path,
+        "permutation_importance": manifest.permutation_importance_path,
+    }
+
+    if artifact_name in json_artifacts:
+        path = json_artifacts[artifact_name]
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="产物不存在")
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as e:
+            raise HTTPException(status_code=500, detail=f"读取产物失败: {e}")
+        return data
+
+    if artifact_name in file_artifacts:
+        path = file_artifacts[artifact_name]
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="产物不存在")
+        return FileResponse(
+            str(path),
+            filename=path.name,
+            media_type="application/octet-stream",
+        )
+
+    raise HTTPException(status_code=400, detail=f"未知产物名称: {artifact_name}")
 
 
 @router.get("/{run_id}/events")

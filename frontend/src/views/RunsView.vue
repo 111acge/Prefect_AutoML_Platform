@@ -124,10 +124,18 @@
             inactive-text="仅基础清洗"
           />
         </el-form-item>
+        <el-form-item label="执行模式">
+          <el-radio-group v-model="createForm.mode">
+            <el-radio-button label="auto">一键训练</el-radio-button>
+            <el-radio-button label="step">分步 Pipeline</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showCreateDialog = false">取消</el-button>
-        <el-button type="primary" @click="submitCreate" :loading="creating">创建</el-button>
+        <el-button type="primary" @click="submitCreate" :loading="creating">
+          {{ createForm.mode === 'step' ? '创建 Pipeline' : '创建' }}
+        </el-button>
       </template>
     </el-dialog>
   </div>
@@ -167,6 +175,7 @@ const createForm = ref({
   preset: 'auto',
   seed: null,
   feature_engineering_enabled: true,
+  mode: 'auto',
 })
 
 const statusType = (status) => {
@@ -213,10 +222,14 @@ const submitCreate = async () => {
       payload.time_budget_minutes = null
     }
     const res = await runApi.create(payload)
-    ElMessage.success('训练任务已创建')
+    ElMessage.success(payload.mode === 'step' ? 'Pipeline 草稿已创建' : '训练任务已创建')
     showCreateDialog.value = false
     resetCreateForm()
-    router.push(`/runs/${res.data.id}`)
+    if (payload.mode === 'step') {
+      router.push(`/runs/${res.data.id}/pipeline`)
+    } else {
+      router.push(`/runs/${res.data.id}`)
+    }
   } catch (error) {
     ElMessage.error('创建训练任务失败: ' + error.message)
   } finally {
@@ -241,6 +254,7 @@ const resetCreateForm = () => {
     preset: 'auto',
     seed: null,
     feature_engineering_enabled: true,
+    mode: 'auto',
   }
   unlimitedTime.value = false
   quickMode.value = 'standard'

@@ -6,7 +6,12 @@
       <template #header>
         <div class="card-header">
           <span>任务信息</span>
-          <el-tag :type="statusType(run.status)">{{ run.status }}</el-tag>
+          <div>
+            <el-button size="small" @click="$router.push(`/runs/${run.id}/pipeline`)">
+              查看 Pipeline
+            </el-button>
+            <el-tag :type="statusType(run.status)">{{ run.status }}</el-tag>
+          </div>
         </div>
       </template>
 

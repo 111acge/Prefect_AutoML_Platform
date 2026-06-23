@@ -115,6 +115,7 @@ class RunCreate(BaseModel):
     """启动训练任务请求。
 
     target_column / task_type 为空时，从数据集 schema_info 自动推断。
+    mode 控制创建后是否立即执行：auto（一键训练，默认），step（仅创建草稿，等待单步触发）。
     """
 
     dataset_id: str
@@ -132,6 +133,7 @@ class RunCreate(BaseModel):
     feature_engineering_enabled: bool = Field(default=True)
     experiment_id: Optional[str] = None
     candidate_config: Optional[CandidateConfig] = None
+    mode: str = Field(default="auto", pattern="^(auto|step)$")
 
 
 class ExperimentCreate(BaseModel):
@@ -199,6 +201,30 @@ class RunResponse(BaseModel):
     completed_at: Optional[datetime]
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class RunStepResponse(BaseModel):
+    """训练任务原子步骤响应。"""
+
+    id: str
+    run_id: str
+    step_name: str
+    status: str
+    sequence: int
+    input_manifest: Optional[Dict[str, Any]] = None
+    output_manifest: Optional[Dict[str, Any]] = None
+    error_message: Optional[str] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StepExecutionRequest(BaseModel):
+    """执行单个步骤请求。"""
+
+    step_name: Optional[str] = None
 
 
 class RunResult(BaseModel):

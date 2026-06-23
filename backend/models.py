@@ -96,3 +96,21 @@ class Metric(Base):
     metric_name: Mapped[str] = mapped_column(String(50), nullable=False)
     metric_value: Mapped[float] = mapped_column(Float, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+
+
+class RunStep(Base):
+    """训练任务原子步骤表。"""
+
+    __tablename__ = "run_steps"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    step_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), default="pending")
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    input_manifest: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    output_manifest: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))

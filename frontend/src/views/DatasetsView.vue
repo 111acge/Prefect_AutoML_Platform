@@ -122,11 +122,19 @@
             inactive-text="仅基础清洗"
           />
         </el-form-item>
+        <el-form-item label="执行模式">
+          <el-radio-group v-model="trainForm.mode">
+            <el-radio-button label="auto">一键训练</el-radio-button>
+            <el-radio-button label="step">分步 Pipeline</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
       </el-form>
 
       <template #footer>
         <el-button @click="showTrainDialog = false">取消</el-button>
-        <el-button type="primary" @click="submitTrain" :loading="training">开始训练</el-button>
+        <el-button type="primary" @click="submitTrain" :loading="training">
+          {{ trainForm.mode === 'step' ? '创建 Pipeline' : '开始训练' }}
+        </el-button>
       </template>
     </el-dialog>
 
@@ -271,6 +279,7 @@ const trainForm = ref({
   preset: 'auto',
   seed: null,
   feature_engineering_enabled: true,
+  mode: 'auto',
 })
 const trainUnlimitedTime = ref(false)
 const trainQuickMode = ref('standard')
@@ -299,6 +308,7 @@ const resetTrainForm = () => {
     preset: 'auto',
     seed: null,
     feature_engineering_enabled: true,
+    mode: 'auto',
   }
   trainUnlimitedTime.value = false
   trainQuickMode.value = 'standard'
@@ -462,10 +472,14 @@ const submitTrain = async () => {
       payload.time_budget_minutes = null
     }
     const res = await runApi.create(payload)
-    ElMessage.success('训练任务已启动')
+    ElMessage.success(payload.mode === 'step' ? 'Pipeline 草稿已创建' : '训练任务已启动')
     showTrainDialog.value = false
     resetTrainForm()
-    router.push(`/runs/${res.data.id}`)
+    if (payload.mode === 'step') {
+      router.push(`/runs/${res.data.id}/pipeline`)
+    } else {
+      router.push(`/runs/${res.data.id}`)
+    }
   } catch (error) {
     ElMessage.error('启动训练失败: ' + error.message)
   } finally {
