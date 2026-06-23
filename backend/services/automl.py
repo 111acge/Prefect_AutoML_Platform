@@ -1,6 +1,7 @@
 """AutoGluon 封装服务。"""
 
 import logging
+import os
 import random
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -80,6 +81,7 @@ class AutoMLService:
             "presets": preset,
             "time_limit": time_limit,
             "dynamic_stacking": False,  # 禁用 DyStack，避免某些场景下 Learner 被重复 fit
+            "num_cpus": os.cpu_count(),  # 使用全部逻辑核心（默认 AutoGluon 只用物理核心）
         }
         # 动态模型空间
         hyperparameters = self._select_hyperparameters(strategy, seed)

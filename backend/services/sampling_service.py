@@ -103,12 +103,28 @@ def build_sampling_strategy(
 
     # 大数据量优先欠采样，避免训练时间爆炸
     if n_samples > 100_000:
+        min_class_count = int(y.value_counts().min())
+        # 若最小类样本数过少，RandomUnderSampler(auto) 会把所有类别欠采样到同样大小，
+        # 在多分类场景下可能导致训练集仅剩 1 条/类，直接崩溃。
+        if min_class_count < 100:
+            return SamplingStrategy(
+                method="class_weight",
+                imbalance_ratio=ratio,
+                rationale=rationale
+                + [
+                    f"样本量较大 ({n_samples})，但最小类仅 {min_class_count} 条，"
+                    "欠采样会严重损失数据，改用 class_weight/sample_weight"
+                ],
+            )
         strategy = SamplingStrategy(
             method="random_under",
             params={"sampling_strategy": "auto", "random_state": 42},
             imbalance_ratio=ratio,
             rationale=rationale
-            + [f"样本量较大 ({n_samples})，优先使用 RandomUnderSampler 控制训练规模"],
+            + [
+                f"样本量较大 ({n_samples})，最小类 {min_class_count} 条，"
+                "使用 RandomUnderSampler 控制训练规模"
+            ],
         )
         return strategy
 

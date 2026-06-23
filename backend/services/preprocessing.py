@@ -87,36 +87,63 @@ def _stratified_split_with_presence(
 
     - 对于只有 1 个样本的类别，会复制出 1 条副本，分别放入训练/测试集。
     - 其余样本按 ``test_size`` 近似比例随机分配。
+
+    使用 numpy 向量化操作避免大数据量下的 Python 级循环瓶颈。
     """
     rng = np.random.RandomState(random_state)
     df = df.reset_index(drop=True)
+    n_original = len(df)
 
-    train_idx: List[int] = []
-    test_idx: List[int] = []
-    remainder_idx: List[int] = []
+    # 按目标列排序，快速得到类别边界
+    y = df[target_column].to_numpy()
+    sorted_idx = np.argsort(y, kind="mergesort")
+    sorted_y = y[sorted_idx]
+    boundaries = np.where(sorted_y[:-1] != sorted_y[1:])[0] + 1
+    starts = np.concatenate(([0], boundaries))
+    ends = np.concatenate((boundaries, [len(sorted_idx)]))
 
-    for _, group in df.groupby(target_column):
-        idx = group.index.tolist()
-        if len(idx) == 1:
-            # 复制 singleton，训练/测试各放一条
-            df = pd.concat([df, df.loc[idx].copy()], ignore_index=True)
-            idx = [idx[0], len(df) - 1]
-        # 每个类别至少选 1 条给 train、1 条给 test
-        chosen = rng.choice(idx, size=2, replace=False).tolist()
-        train_idx.append(chosen[0])
-        test_idx.append(chosen[1])
-        remainder_idx.extend([i for i in idx if i not in chosen])
+    n_groups = len(starts)
+    train_idx = np.empty(n_groups, dtype=np.int64)
+    test_idx = np.empty(n_groups, dtype=np.int64)
+    singleton_mask = np.zeros(n_groups, dtype=bool)
+
+    for i, (s, e) in enumerate(zip(starts, ends)):
+        group_idx = sorted_idx[s:e]
+        if len(group_idx) == 1:
+            # singleton：原始样本给训练集，稍后再复制一份给测试集
+            train_idx[i] = group_idx[0]
+            singleton_mask[i] = True
+        else:
+            chosen = rng.choice(group_idx, size=2, replace=False)
+            train_idx[i] = chosen[0]
+            test_idx[i] = chosen[1]
+
+    # 复制 singleton 样本给测试集
+    n_singletons = int(singleton_mask.sum())
+    if n_singletons:
+        dup_rows = df.iloc[train_idx[singleton_mask]].copy()
+        df = pd.concat([df, dup_rows], ignore_index=True)
+        test_idx[singleton_mask] = np.arange(n_original, n_original + n_singletons)
+
+    # 使用布尔掩码快速得到剩余样本
+    chosen_mask = np.zeros(len(df), dtype=bool)
+    chosen_mask[train_idx] = True
+    chosen_mask[test_idx] = True
+    remainder_idx = np.where(~chosen_mask)[0]
 
     n_test_target = int(round(len(df) * test_size)) - len(test_idx)
     n_test_target = max(0, min(n_test_target, len(remainder_idx)))
     if n_test_target > 0:
-        test_rem = rng.choice(remainder_idx, size=n_test_target, replace=False).tolist()
+        test_rem = rng.choice(remainder_idx, size=n_test_target, replace=False)
     else:
-        test_rem = []
-    train_rem = [i for i in remainder_idx if i not in test_rem]
+        test_rem = np.array([], dtype=np.int64)
 
-    train_df = df.loc[train_idx + train_rem].reset_index(drop=True)
-    test_df = df.loc[test_idx + test_rem].reset_index(drop=True)
+    test_rem_mask = np.zeros(len(df), dtype=bool)
+    test_rem_mask[test_rem] = True
+    train_rem = np.where(~chosen_mask & ~test_rem_mask)[0]
+
+    train_df = df.iloc[np.concatenate([train_idx, train_rem])].reset_index(drop=True)
+    test_df = df.iloc[np.concatenate([test_idx, test_rem])].reset_index(drop=True)
     return train_df, test_df
 
 
