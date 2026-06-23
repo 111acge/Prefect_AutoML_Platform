@@ -10,8 +10,8 @@
         </el-descriptions-item>
         <el-descriptions-item label="数据集">{{ run.dataset_id }}</el-descriptions-item>
         <el-descriptions-item label="目标列">{{ run.config?.target_column }}</el-descriptions-item>
-        <el-descriptions-item label="任务类型">{{ run.config?.task_type }}</el-descriptions-item>
-        <el-descriptions-item label="时间预算">{{ run.time_budget_minutes }} min</el-descriptions-item>
+        <el-descriptions-item label="任务类型">{{ taskTypeLabel(run.config?.task_type) }}</el-descriptions-item>
+        <el-descriptions-item label="时间预算">{{ run.time_budget_minutes ?? '无限制' }} min</el-descriptions-item>
       </el-descriptions>
     </el-card>
 
@@ -47,6 +47,7 @@
                 <el-button
                   v-if="selectedStep.status === 'completed'"
                   size="small"
+                  :loading="artifactLoading"
                   @click="loadArtifacts(selectedStep.step_name)"
                 >
                   刷新产物
@@ -56,7 +57,7 @@
           </template>
 
           <div class="step-meta">
-            <p><strong>状态：</strong>{{ selectedStep.status }}</p>
+            <p><strong>状态：</strong>{{ statusLabel(selectedStep.status) }}</p>
             <p v-if="selectedStep.started_at">
               <strong>开始：</strong>{{ formatTime(selectedStep.started_at) }}
             </p>
@@ -68,12 +69,59 @@
             </p>
           </div>
 
-          <div v-if="artifactPreview" class="artifact-preview">
-            <h4>产物预览</h4>
-            <pre>{{ JSON.stringify(artifactPreview, null, 2) }}</pre>
+          <div v-if="artifactPreview?.type" class="artifact-section">
+            <div class="artifact-header">
+              <h4>{{ artifactTitle }}</h4>
+              <el-text v-if="artifactPreview.total !== undefined" type="info" size="small">
+                共 {{ artifactPreview.total }} 行{{ artifactPreview.truncated ? '，仅展示前 20 行' : '' }}
+              </el-text>
+            </div>
+
+            <!-- JSON -->
+            <div v-if="artifactPreview.type === 'json'" class="artifact-json">
+              <pre>{{ JSON.stringify(artifactPreview.data, null, 2) }}</pre>
+            </div>
+
+            <!-- 表格（CSV / Parquet） -->
+            <div v-else-if="artifactPreview.type === 'table'" class="artifact-table">
+              <el-table :data="artifactPreview.rows" style="width: 100%" max-height="420px" border>
+                <el-table-column
+                  v-for="col in artifactPreview.columns"
+                  :key="col.name"
+                  :prop="col.name"
+                  :label="col.name"
+                  min-width="120"
+                  show-overflow-tooltip
+                />
+              </el-table>
+            </div>
+
+            <!-- HTML 报告 -->
+            <div v-else-if="artifactPreview.type === 'html'" class="artifact-html">
+              <iframe :src="artifactPreview.url" class="artifact-iframe"></iframe>
+            </div>
+
+            <!-- 可下载二进制 -->
+            <div v-else-if="artifactPreview.type === 'download'" class="artifact-download">
+              <el-alert
+                title="该产物为二进制文件，无法直接预览"
+                type="info"
+                :closable="false"
+                show-icon
+              />
+              <el-button
+                type="primary"
+                :href="artifactPreview.url"
+                :download="artifactPreview.filename"
+                tag="a"
+                style="margin-top: 12px"
+              >
+                下载 {{ artifactPreview.filename }}
+              </el-button>
+            </div>
           </div>
 
-          <div v-if="selectedStep.status === 'completed' && !artifactPreview" class="artifact-hint">
+          <div v-else-if="selectedStep.status === 'completed'" class="artifact-hint">
             <el-text type="info">点击“刷新产物”查看此步骤输出</el-text>
           </div>
         </el-card>
@@ -134,11 +182,10 @@ const steps = computed(() => pipeline.steps)
 const selectedIndex = ref(0)
 const selectedStep = computed(() => steps.value[selectedIndex.value] || null)
 const artifactPreview = ref(null)
+const artifactLoading = ref(false)
 const pollTimer = ref(null)
 
-const stepDisplayList = computed(() => {
-  return steps.value
-})
+const stepDisplayList = computed(() => steps.value)
 
 const activeIndex = computed(() => {
   const running = steps.value.findIndex((s) => s.status === 'running')
@@ -163,8 +210,35 @@ const stepTitles = {
   report: 'HTML 报告',
 }
 
+const taskTypeLabels = {
+  binary_classification: '二分类',
+  multiclass_classification: '多分类',
+  regression: '回归',
+}
+
+// 步骤 -> 产物名称 & 展示类型
+const artifactMeta = {
+  ingest: { name: 'raw', type: 'parquet' },
+  analyze: { name: 'metadata', type: 'json' },
+  quality: { name: 'quality_report', type: 'json' },
+  strategy: { name: 'strategy', type: 'json' },
+  split: { name: 'train_raw', type: 'parquet' },
+  cross_validate: { name: 'cv_results', type: 'json' },
+  fit_preprocessor: { name: 'feature_columns', type: 'json' },
+  transform: { name: 'train_transformed', type: 'parquet' },
+  sample: { name: 'sampled_train', type: 'parquet' },
+  train: { name: 'leaderboard', type: 'csv' },
+  evaluate: { name: 'metrics', type: 'json' },
+  interpret: { name: 'interpretation', type: 'json' },
+  report: { name: 'report', type: 'html' },
+}
+
 function stepTitle(step) {
   return stepTitles[step.step_name] || step.step_name
+}
+
+function taskTypeLabel(type) {
+  return taskTypeLabels[type] || type || '-'
 }
 
 function stepDescription(step) {
@@ -172,6 +246,16 @@ function stepDescription(step) {
   if (step.status === 'completed') return '已完成'
   if (step.status === 'failed') return step.error_message || '失败'
   return '等待执行'
+}
+
+function statusLabel(status) {
+  const map = {
+    pending: '等待执行',
+    running: '执行中',
+    completed: '已完成',
+    failed: '失败',
+  }
+  return map[status] || status
 }
 
 function stepStatus(step) {
@@ -195,8 +279,18 @@ function canRun(step) {
   return step.status !== 'running' && step.status !== 'completed'
 }
 
+let currentObjectUrl = null
+
+function revokeCurrentUrl() {
+  if (currentObjectUrl) {
+    URL.revokeObjectURL(currentObjectUrl)
+    currentObjectUrl = null
+  }
+}
+
 function selectStep(index) {
   selectedIndex.value = index
+  revokeCurrentUrl()
   artifactPreview.value = null
 }
 
@@ -231,7 +325,6 @@ async function continueRun() {
 }
 
 async function runAll() {
-  // 依次触发所有 pending/failed 步骤，每次等一个完成再继续下一个
   const pending = steps.value.filter((s) => s.status === 'pending' || s.status === 'failed')
   if (pending.length === 0) {
     ElMessage.info('没有待执行的步骤')
@@ -246,30 +339,65 @@ async function runAll() {
   }
 }
 
-async function loadArtifacts(stepName) {
-  artifactPreview.value = null
-  const mapping = {
-    ingest: 'raw',
-    analyze: 'metadata',
-    quality: 'quality_report',
-    strategy: 'strategy',
-    split: 'train_raw',
-    cross_validate: 'cv_results',
-    fit_preprocessor: 'feature_columns',
-    transform: 'train_transformed',
-    sample: 'sampled_train',
-    train: 'leaderboard',
-    evaluate: 'metrics',
-    interpret: 'interpretation',
-    report: 'report',
+const artifactTitle = computed(() => {
+  if (!selectedStep.value) return ''
+  const meta = artifactMeta[selectedStep.value.step_name]
+  if (!meta) return ''
+  const titles = {
+    json: 'JSON 产物',
+    csv: 'CSV 产物预览',
+    parquet: 'Parquet 产物预览',
+    html: 'HTML 报告',
+    download: '产物下载',
   }
-  const name = mapping[stepName]
-  if (!name) return
+  return titles[meta.type] || meta.name
+})
+
+async function loadArtifacts(stepName) {
+  revokeCurrentUrl()
+  artifactPreview.value = null
+  artifactLoading.value = true
+
+  const meta = artifactMeta[stepName]
+  if (!meta) {
+    artifactLoading.value = false
+    return
+  }
+
   try {
-    const data = await pipeline.loadArtifact(name)
-    artifactPreview.value = data
+    if (meta.type === 'json') {
+      const data = await pipeline.loadArtifact(meta.name)
+      artifactPreview.value = { type: 'json', data }
+      return
+    }
+
+    if (meta.type === 'csv' || meta.type === 'parquet') {
+      const data = await pipeline.previewArtifact(meta.name, 20)
+      artifactPreview.value = {
+        type: 'table',
+        columns: data.columns || [],
+        rows: data.rows || [],
+        total: data.total,
+        truncated: data.truncated,
+      }
+      return
+    }
+
+    if (meta.type === 'html') {
+      const { blob, filename } = await pipeline.downloadArtifact(meta.name)
+      currentObjectUrl = URL.createObjectURL(blob)
+      artifactPreview.value = { type: 'html', url: currentObjectUrl, filename }
+      return
+    }
+
+    // joblib 等二进制
+    const { blob, filename } = await pipeline.downloadArtifact(meta.name)
+    currentObjectUrl = URL.createObjectURL(blob)
+    artifactPreview.value = { type: 'download', url: currentObjectUrl, filename }
   } catch (e) {
     ElMessage.warning(`产物暂不可用：${e.message}`)
+  } finally {
+    artifactLoading.value = false
   }
 }
 
@@ -316,6 +444,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   stopPolling()
+  revokeCurrentUrl()
 })
 </script>
 
@@ -336,7 +465,7 @@ onUnmounted(() => {
 }
 
 .step-list {
-  width: 320px;
+  width: 300px;
   flex-shrink: 0;
   max-height: calc(100vh - 240px);
   overflow-y: auto;
@@ -366,17 +495,55 @@ onUnmounted(() => {
   color: #f56c6c;
 }
 
-.artifact-preview {
+.artifact-section {
+  margin-top: 16px;
+}
+
+.artifact-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.artifact-header h4 {
+  margin: 0;
+}
+
+.artifact-json {
   background: #f5f7fa;
   padding: 12px;
   border-radius: 4px;
   overflow-x: auto;
 }
 
-.artifact-preview pre {
+.artifact-json pre {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.artifact-table {
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.artifact-html {
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.artifact-iframe {
+  width: 100%;
+  height: 480px;
+  border: none;
+}
+
+.artifact-download {
+  padding: 12px;
+  background: #f5f7fa;
+  border-radius: 4px;
 }
 
 .artifact-hint {

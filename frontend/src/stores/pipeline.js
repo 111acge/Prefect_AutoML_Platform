@@ -94,6 +94,22 @@ export const usePipelineStore = defineStore('pipeline', () => {
     return res.data
   }
 
+  async function previewArtifact(name, n = 20) {
+    if (!runId.value) return null
+    const res = await runApi.previewArtifact(runId.value, name, n)
+    return res.data
+  }
+
+  async function downloadArtifact(name) {
+    if (!runId.value) return null
+    const res = await runApi.getArtifactBlob(runId.value, name)
+    return {
+      blob: res.data,
+      contentType: res.headers['content-type'],
+      filename: name,
+    }
+  }
+
   return {
     runId,
     run,
@@ -113,5 +129,7 @@ export const usePipelineStore = defineStore('pipeline', () => {
     executeStep,
     continueRun,
     loadArtifact,
+    previewArtifact,
+    downloadArtifact,
   }
 })

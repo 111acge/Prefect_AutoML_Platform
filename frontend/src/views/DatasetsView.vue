@@ -29,14 +29,17 @@
             {{ formatDate(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="320">
+        <el-table-column label="操作" width="280">
           <template #default="{ row }">
             <el-button size="small" @click="previewDataset(row)">预览</el-button>
-            <el-button size="small" type="info" @click="showQuality(row)">质量报告</el-button>
+            <el-button size="small" type="info" @click="showQuality(row)">质量</el-button>
             <el-button size="small" type="primary" @click="startTraining(row)">训练</el-button>
             <el-button size="small" type="danger" @click="deleteDataset(row)">删除</el-button>
           </template>
         </el-table-column>
+        <template #empty>
+          <el-empty description="暂无数据集，请先上传" />
+        </template>
       </el-table>
     </el-card>
 
@@ -65,77 +68,13 @@
     </el-dialog>
 
     <!-- 训练对话框 -->
-    <el-dialog v-model="showTrainDialog" title="启动训练任务" width="500px">
-      <el-form :model="trainForm" label-width="120px">
-        <el-form-item label="目标列">
-          <el-select v-model="trainForm.target_column" style="width: 100%" placeholder="请选择目标列">
-            <el-option
-              v-for="col in datasetColumns"
-              :key="col"
-              :label="col"
-              :value="col"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="任务类型">
-          <el-select v-model="trainForm.task_type" style="width: 100%">
-            <el-option label="二分类" value="binary_classification" />
-            <el-option label="多分类" value="multiclass_classification" />
-            <el-option label="回归" value="regression" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="快速模式">
-          <el-radio-group v-model="trainQuickMode" @change="onTrainQuickModeChange">
-            <el-radio-button label="quick">快速体验</el-radio-button>
-            <el-radio-button label="standard">标准</el-radio-button>
-            <el-radio-button label="deep">深度</el-radio-button>
-            <el-radio-button label="unlimited">不限制</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item label="时间预算(分钟)">
-          <div style="display: flex; align-items: center; gap: 12px;">
-            <el-input-number
-              v-model="trainForm.time_budget_minutes"
-              :min="0.1"
-              :max="1440"
-              :disabled="trainUnlimitedTime"
-              :controls="false"
-              style="width: 160px"
-            />
-            <el-checkbox v-model="trainUnlimitedTime">无限制</el-checkbox>
-          </div>
-        </el-form-item>
-        <el-form-item label="Preset">
-          <el-select v-model="trainForm.preset" style="width: 100%">
-            <el-option label="自动选择（推荐）" value="auto" />
-            <el-option label="medium_quality" value="medium_quality" />
-            <el-option label="best_quality" value="best_quality" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="随机种子">
-          <el-input-number v-model="trainForm.seed" :min="0" :controls="false" style="width: 100%" placeholder="留空则不固定" />
-        </el-form-item>
-        <el-form-item label="特征工程">
-          <el-switch
-            v-model="trainForm.feature_engineering_enabled"
-            active-text="启用高级特征工程"
-            inactive-text="仅基础清洗"
-          />
-        </el-form-item>
-        <el-form-item label="执行模式">
-          <el-radio-group v-model="trainForm.mode">
-            <el-radio-button label="auto">一键训练</el-radio-button>
-            <el-radio-button label="step">分步 Pipeline</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
-      </el-form>
-
-      <template #footer>
-        <el-button @click="showTrainDialog = false">取消</el-button>
-        <el-button type="primary" @click="submitTrain" :loading="training">
-          {{ trainForm.mode === 'step' ? '创建 Pipeline' : '开始训练' }}
-        </el-button>
-      </template>
+    <el-dialog v-model="showTrainDialog" title="启动训练任务" width="520px">
+      <TrainConfigForm
+        :dataset="currentDataset"
+        :loading="training"
+        @submit="submitTrain"
+        @cancel="showTrainDialog = false"
+      />
     </el-dialog>
 
     <!-- 预览对话框 -->
@@ -239,6 +178,7 @@ import { Upload, Cpu } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { datasetApi, runApi } from '@/api'
 import EChart from '@/components/EChart.vue'
+import TrainConfigForm from '@/components/TrainConfigForm.vue'
 
 const router = useRouter()
 const datasets = ref([])
@@ -254,7 +194,6 @@ const training = ref(false)
 const trainingDefault = ref(false)
 const selectedFile = ref(null)
 const currentDataset = ref(null)
-const datasetColumns = ref([])
 const previewData = ref({ columns: [], rows: [] })
 
 const previewRows = computed(() => {
@@ -271,48 +210,6 @@ const uploadForm = ref({
   name: '',
 })
 
-const trainForm = ref({
-  dataset_id: '',
-  target_column: '',
-  task_type: 'binary_classification',
-  time_budget_minutes: 10,
-  preset: 'auto',
-  seed: null,
-  feature_engineering_enabled: true,
-  mode: 'auto',
-})
-const trainUnlimitedTime = ref(false)
-const trainQuickMode = ref('standard')
-
-const TRAIN_QUICK_MODES = {
-  quick: { preset: 'good_quality', time_budget_minutes: 1 },
-  standard: { preset: 'auto', time_budget_minutes: 10 },
-  deep: { preset: 'best_quality', time_budget_minutes: 30 },
-  unlimited: { preset: 'best_quality', time_budget_minutes: null },
-}
-
-const onTrainQuickModeChange = (mode) => {
-  const cfg = TRAIN_QUICK_MODES[mode]
-  if (!cfg) return
-  trainForm.value.preset = cfg.preset
-  trainForm.value.time_budget_minutes = cfg.time_budget_minutes ?? 10
-  trainUnlimitedTime.value = cfg.time_budget_minutes === null
-}
-
-const resetTrainForm = () => {
-  trainForm.value = {
-    dataset_id: '',
-    target_column: '',
-    task_type: 'binary_classification',
-    time_budget_minutes: 10,
-    preset: 'auto',
-    seed: null,
-    feature_engineering_enabled: true,
-    mode: 'auto',
-  }
-  trainUnlimitedTime.value = false
-  trainQuickMode.value = 'standard'
-}
 
 const fetchDatasets = async () => {
   loading.value = true
@@ -450,31 +347,15 @@ const dimensionList = computed(() => {
 
 const startTraining = (row) => {
   currentDataset.value = row
-  trainForm.value.dataset_id = row.id
-  trainForm.value.target_column = ''
-  datasetColumns.value = Object.keys(row.schema_info?.field_types || {})
   showTrainDialog.value = true
 }
 
-const submitTrain = async () => {
-  if (!trainForm.value.target_column) {
-    ElMessage.warning('请选择目标列')
-    return
-  }
-
+const submitTrain = async (payload) => {
   training.value = true
   try {
-    const payload = {
-      dataset_id: currentDataset.value.id,
-      ...trainForm.value,
-    }
-    if (trainUnlimitedTime.value) {
-      payload.time_budget_minutes = null
-    }
     const res = await runApi.create(payload)
     ElMessage.success(payload.mode === 'step' ? 'Pipeline 草稿已创建' : '训练任务已启动')
     showTrainDialog.value = false
-    resetTrainForm()
     if (payload.mode === 'step') {
       router.push(`/runs/${res.data.id}/pipeline`)
     } else {

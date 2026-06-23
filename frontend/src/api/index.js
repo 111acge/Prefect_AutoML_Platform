@@ -34,13 +34,17 @@ export const datasetApi = {
 // 训练任务 API
 export const runApi = {
   list: () => api.get('/runs'),
-  create: (data) => api.post('/runs', data),
+  create: (data) => api.post('/runs', data, { timeout: 120000 }),
   get: (id) => api.get(`/runs/${id}`),
   getResults: (id) => api.get(`/runs/${id}/results`),
   getSteps: (id) => api.get(`/runs/${id}/steps`),
   executeStep: (id, stepName) => api.post(`/runs/${id}/steps/${stepName}`),
   continue: (id, stepName = null) => api.post(`/runs/${id}/continue`, { step_name: stepName }),
   getArtifact: (id, name) => api.get(`/runs/${id}/artifacts/${name}`),
+  getArtifactBlob: (id, name) =>
+    api.get(`/runs/${id}/artifacts/${name}`, { responseType: 'blob' }),
+  previewArtifact: (id, name, n = 20) =>
+    api.get(`/runs/${id}/artifacts/${name}/preview`, { params: { n } }),
   getLogs: (id) => api.get(`/runs/${id}/logs`),
   predict: (id, data) => api.post(`/runs/${id}/predict`, data),
   delete: (id) => api.delete(`/runs/${id}`),

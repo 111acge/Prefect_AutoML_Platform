@@ -1,288 +1,322 @@
 <template>
   <div class="run-detail">
-    <el-page-header @back="$router.push('/runs')" title="任务详情" />
+    <el-page-header @back="$router.push('/runs')" title="任务详情">
+      <template #extra>
+        <el-button size="small" @click="$router.push(`/runs/${run.id}/pipeline`)">
+          查看 Pipeline
+        </el-button>
+      </template>
+    </el-page-header>
 
     <el-card v-loading="loading" class="info-card">
       <template #header>
         <div class="card-header">
           <span>任务信息</span>
-          <div>
-            <el-button size="small" @click="$router.push(`/runs/${run.id}/pipeline`)">
-              查看 Pipeline
-            </el-button>
-            <el-tag :type="statusType(run.status)">{{ run.status }}</el-tag>
-          </div>
+          <el-tag :type="statusType(run.status)">{{ statusLabel(run.status) }}</el-tag>
         </div>
       </template>
 
       <el-descriptions :column="2" border>
         <el-descriptions-item label="任务ID">{{ run.id }}</el-descriptions-item>
-        <el-descriptions-item label="数据集ID">{{ run.dataset_id }}</el-descriptions-item>
-        <el-descriptions-item label="状态">{{ run.status }}</el-descriptions-item>
-        <el-descriptions-item label="时间预算">{{ run.time_budget_minutes ?? '无限制' }}</el-descriptions-item>
-        <el-descriptions-item label="随机种子">{{ run.config?.seed ?? '-' }}</el-descriptions-item>
+        <el-descriptions-item label="数据集">{{ run.dataset_id }}</el-descriptions-item>
+        <el-descriptions-item label="目标列">{{ run.config?.target_column || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="任务类型">{{ taskTypeLabel(run.config?.task_type) }}</el-descriptions-item>
         <el-descriptions-item label="评估指标">{{ run.primary_metric || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="时间预算">{{ run.time_budget_minutes ?? '无限制' }} min</el-descriptions-item>
+        <el-descriptions-item label="随机种子">{{ run.config?.seed ?? '-' }}</el-descriptions-item>
         <el-descriptions-item label="创建时间">{{ formatDate(run.created_at) }}</el-descriptions-item>
-        <el-descriptions-item label="完成时间">{{ formatDate(run.completed_at) || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="完成时间" v-if="run.completed_at">{{ formatDate(run.completed_at) }}</el-descriptions-item>
         <el-descriptions-item label="错误信息" v-if="run.error_message">
-          <span style="color: #f56c6c;">{{ run.error_message }}</span>
+          <span class="error-text">{{ run.error_message }}</span>
         </el-descriptions-item>
         <el-descriptions-item label="错误类型" v-if="results?.error_details?.error_type">
-          <span style="color: #f56c6c;">{{ results.error_details.error_type }}</span>
+          <span class="error-text">{{ results.error_details.error_type }}</span>
         </el-descriptions-item>
       </el-descriptions>
     </el-card>
 
     <el-card v-if="results" class="result-card">
-      <template #header>
-        <span>训练结果</span>
-      </template>
+      <el-tabs v-model="activeTab" type="border-card">
+        <el-tab-pane label="概览" name="overview">
+          <div class="tab-content">
+            <h3 class="section-title">测试集评估指标</h3>
+            <el-row :gutter="16" class="metric-row">
+              <el-col :xs="12" :sm="8" :md="6" :lg="4" v-for="(value, key) in results.metrics" :key="key">
+                <el-statistic :title="key" :value="typeof value === 'number' ? value : NaN" :precision="4" />
+              </el-col>
+            </el-row>
 
-      <h3>测试集评估指标（主指标）</h3>
-      <el-row :gutter="20" class="metric-row">
-        <el-col :span="4" v-for="(value, key) in results.metrics" :key="key">
-          <div class="metric-item">
-            <div class="metric-label">{{ key }}</div>
-            <div class="metric-value">{{ typeof value === 'number' ? value.toFixed(4) : value }}</div>
-          </div>
-        </el-col>
-      </el-row>
+            <template v-if="results.train_metrics && Object.keys(results.train_metrics).length > 0">
+              <h3 class="section-title">训练集参考指标</h3>
+              <el-row :gutter="16" class="metric-row">
+                <el-col :xs="12" :sm="8" :md="6" :lg="4" v-for="(value, key) in results.train_metrics" :key="key">
+                  <el-statistic :title="key" :value="typeof value === 'number' ? value : NaN" :precision="4" />
+                </el-col>
+              </el-row>
+            </template>
 
-      <template v-if="results.train_metrics && Object.keys(results.train_metrics).length > 0">
-        <h3>训练集参考指标</h3>
-        <el-row :gutter="20" class="metric-row">
-          <el-col :span="4" v-for="(value, key) in results.train_metrics" :key="key">
-            <div class="metric-item metric-item-train">
-              <div class="metric-label">{{ key }}</div>
-              <div class="metric-value">{{ typeof value === 'number' ? value.toFixed(4) : value }}</div>
-            </div>
-          </el-col>
-        </el-row>
-      </template>
+            <template v-if="results.cv_results && results.cv_results.cv_scores">
+              <h3 class="section-title">交叉验证</h3>
+              <el-row :gutter="16" class="metric-row">
+                <el-col :xs="12" :sm="6">
+                  <div class="metric-item">
+                    <div class="metric-label">CV 类型</div>
+                    <div class="metric-value">{{ results.cv_results.cv_type }}</div>
+                  </div>
+                </el-col>
+                <el-col :xs="12" :sm="6">
+                  <el-statistic title="折数" :value="results.cv_results.n_folds" />
+                </el-col>
+                <el-col :xs="12" :sm="6">
+                  <el-statistic title="CV 均值" :value="results.cv_results.cv_mean" :precision="4" />
+                </el-col>
+                <el-col :xs="12" :sm="6">
+                  <el-statistic title="CV 标准差" :value="results.cv_results.cv_std" :precision="4" />
+                </el-col>
+              </el-row>
+              <el-alert
+                v-if="results.cv_results.cv_error"
+                :title="'CV 计算失败: ' + results.cv_results.cv_error"
+                type="warning"
+                :closable="false"
+              />
+            </template>
 
-      <template v-if="results.cv_results && results.cv_results.cv_scores">
-        <h3>交叉验证（完整 Pipeline）</h3>
-        <el-row :gutter="20" class="metric-row">
-          <el-col :span="6">
-            <div class="metric-item">
-              <div class="metric-label">CV 类型</div>
-              <div class="metric-value">{{ results.cv_results.cv_type }}</div>
-            </div>
-          </el-col>
-          <el-col :span="6">
-            <div class="metric-item">
-              <div class="metric-label">折数</div>
-              <div class="metric-value">{{ results.cv_results.n_folds }}</div>
-            </div>
-          </el-col>
-          <el-col :span="6">
-            <div class="metric-item">
-              <div class="metric-label">CV 均值</div>
-              <div class="metric-value">{{ results.cv_results.cv_mean?.toFixed(4) }}</div>
-            </div>
-          </el-col>
-          <el-col :span="6">
-            <div class="metric-item">
-              <div class="metric-label">CV 标准差</div>
-              <div class="metric-value">{{ results.cv_results.cv_std?.toFixed(4) }}</div>
-            </div>
-          </el-col>
-        </el-row>
-        <el-alert
-          v-if="results.cv_results.cv_error"
-          :title="'CV 计算失败: ' + results.cv_results.cv_error"
-          type="warning"
-          :closable="false"
-        />
-      </template>
+            <template v-if="extendedMetricItems.length > 0">
+              <h3 class="section-title">扩展评估指标</h3>
+              <el-row :gutter="16" class="metric-row">
+                <el-col :xs="12" :sm="8" :md="6" :lg="4" v-for="item in extendedMetricItems" :key="item.key">
+                  <el-statistic :title="item.label" :value="Number(item.value)" :precision="4" />
+                </el-col>
+              </el-row>
+            </template>
 
-      <template v-if="results.extended_metrics && extendedMetricItems.length > 0">
-        <h3>扩展评估指标</h3>
-        <el-row :gutter="20" class="metric-row">
-          <el-col :span="4" v-for="item in extendedMetricItems" :key="item.key">
-            <div class="metric-item">
-              <div class="metric-label">{{ item.label }}</div>
-              <div class="metric-value">{{ item.value }}</div>
-            </div>
-          </el-col>
-        </el-row>
-
-        <template v-if="confusionMatrix">
-          <h3>混淆矩阵</h3>
-          <el-row :gutter="20">
-            <el-col :xs="24" :md="12">
-              <EChart :option="confusionMatrixOption" height="360px" />
-            </el-col>
-            <el-col :xs="24" :md="12">
-              <el-table :data="confusionMatrixRows" border style="width: 100%;">
-                <el-table-column label="真实 \\ 预测" prop="label" width="120" />
-                <el-table-column
-                  v-for="(label, idx) in confusionMatrixLabels"
-                  :key="idx"
-                  :label="label"
-                  :prop="'pred_' + idx"
+            <template v-if="results.business_interpretation">
+              <h3 class="section-title">业务解读摘要</h3>
+              <el-card shadow="never" class="interpretation-card">
+                <el-alert
+                  v-if="results.business_interpretation.provider === 'rule_template'"
+                  title="当前为规则模板生成的兜底解读"
+                  type="info"
+                  :closable="false"
+                  style="margin-bottom: 12px;"
                 />
-              </el-table>
-            </el-col>
-          </el-row>
-        </template>
-      </template>
+                <p class="interpretation-summary">
+                  {{ results.business_interpretation.business_summary }}
+                </p>
+                <div v-if="results.business_interpretation.key_insights?.length" class="interpretation-section">
+                  <h4>关键发现</h4>
+                  <ul>
+                    <li v-for="(item, idx) in results.business_interpretation.key_insights" :key="'insight-' + idx">
+                      {{ item }}
+                    </li>
+                  </ul>
+                </div>
+                <div v-if="results.business_interpretation.feature_interpretations?.length" class="interpretation-section">
+                  <h4>Top 特征业务含义</h4>
+                  <ul>
+                    <li v-for="(item, idx) in results.business_interpretation.feature_interpretations" :key="'feature-' + idx">
+                      <strong>{{ item.feature || item }}</strong>
+                      <span v-if="item.interpretation">：{{ item.interpretation }}</span>
+                    </li>
+                  </ul>
+                </div>
+                <div v-if="results.business_interpretation.caveats?.length" class="interpretation-section">
+                  <h4>使用注意</h4>
+                  <ul>
+                    <li v-for="(item, idx) in results.business_interpretation.caveats" :key="'caveat-' + idx">
+                      {{ item }}
+                    </li>
+                  </ul>
+                </div>
+                <div v-if="results.business_interpretation.recommendations?.length" class="interpretation-section">
+                  <h4>下一步建议</h4>
+                  <ul>
+                    <li v-for="(item, idx) in results.business_interpretation.recommendations" :key="'rec-' + idx">
+                      {{ item }}
+                    </li>
+                  </ul>
+                </div>
+              </el-card>
+            </template>
 
-      <template v-if="results.business_interpretation">
-        <h3>业务解读摘要</h3>
-        <el-card shadow="never" class="interpretation-card">
-          <el-alert
-            v-if="results.business_interpretation.provider === 'rule_template'"
-            title="当前为规则模板生成的兜底解读"
-            type="info"
-            :closable="false"
-            style="margin-bottom: 12px;"
-          />
-          <p class="interpretation-summary">
-            {{ results.business_interpretation.business_summary }}
-          </p>
-
-          <div v-if="results.business_interpretation.key_insights?.length" class="interpretation-section">
-            <h4>关键发现</h4>
-            <ul>
-              <li v-for="(item, idx) in results.business_interpretation.key_insights" :key="'insight-' + idx">
-                {{ item }}
-              </li>
-            </ul>
+            <template v-if="results?.error_details?.traceback">
+              <h3 class="section-title">错误堆栈</h3>
+              <el-input v-model="results.error_details.traceback" type="textarea" :rows="10" readonly />
+            </template>
           </div>
+        </el-tab-pane>
 
-          <div v-if="results.business_interpretation.feature_interpretations?.length" class="interpretation-section">
-            <h4>Top 特征业务含义</h4>
-            <ul>
-              <li v-for="(item, idx) in results.business_interpretation.feature_interpretations" :key="'feature-' + idx">
-                <strong>{{ item.feature || item }}</strong>
-                <span v-if="item.interpretation">：{{ item.interpretation }}</span>
-              </li>
-            </ul>
+        <el-tab-pane label="排行榜" name="leaderboard">
+          <div class="tab-content">
+            <h3 class="section-title">模型排行榜</h3>
+            <div class="leaderboard-controls">
+              <el-select v-model="familyFilter" placeholder="模型族" style="width: 140px">
+                <el-option label="全部" value="all" />
+                <el-option v-for="f in families" :key="f" :label="f" :value="f" />
+              </el-select>
+              <el-select v-model="sortBy" placeholder="排序依据" style="width: 160px; margin-left: 10px">
+                <el-option v-for="col in sortableColumns" :key="col" :label="col" :value="col" />
+              </el-select>
+            </div>
+            <el-table :data="processedLeaderboard" style="width: 100%" max-height="400px" border>
+              <el-table-column
+                v-for="col in leaderboardColumns"
+                :key="col"
+                :prop="col"
+                :label="col"
+                show-overflow-tooltip
+              />
+            </el-table>
+
+            <h3 class="section-title">特征重要性 Top 10</h3>
+            <el-table :data="results.feature_importance.slice(0, 10)" style="width: 100%" max-height="360px" border>
+              <el-table-column
+                v-for="col in importanceColumns"
+                :key="col"
+                :prop="col"
+                :label="col"
+                show-overflow-tooltip
+              />
+            </el-table>
           </div>
+        </el-tab-pane>
 
-          <div v-if="results.business_interpretation.caveats?.length" class="interpretation-section">
-            <h4>使用注意</h4>
-            <ul>
-              <li v-for="(item, idx) in results.business_interpretation.caveats" :key="'caveat-' + idx">
-                {{ item }}
-              </li>
-            </ul>
+        <el-tab-pane label="特征重要性" name="features">
+          <div class="tab-content">
+            <h3 class="section-title">特征重要性 Top 15</h3>
+            <EChart :option="featureImportanceOption" height="420px" />
+
+            <template v-if="results.permutation_importance && results.permutation_importance.length">
+              <h3 class="section-title">Permutation Importance Top 15</h3>
+              <EChart :option="permutationImportanceOption" height="420px" />
+            </template>
           </div>
+        </el-tab-pane>
 
-          <div v-if="results.business_interpretation.recommendations?.length" class="interpretation-section">
-            <h4>下一步建议</h4>
-            <ul>
-              <li v-for="(item, idx) in results.business_interpretation.recommendations" :key="'rec-' + idx">
-                {{ item }}
-              </li>
-            </ul>
+        <el-tab-pane label="混淆矩阵" name="confusion" v-if="confusionMatrix">
+          <div class="tab-content">
+            <h3 class="section-title">混淆矩阵</h3>
+            <el-row :gutter="20">
+              <el-col :xs="24" :md="12">
+                <EChart :option="confusionMatrixOption" height="420px" />
+              </el-col>
+              <el-col :xs="24" :md="12">
+                <el-table :data="confusionMatrixRows" border style="width: 100%;">
+                  <el-table-column label="真实 \ 预测" prop="label" width="120" />
+                  <el-table-column
+                    v-for="(label, idx) in confusionMatrixLabels"
+                    :key="idx"
+                    :label="label"
+                    :prop="'pred_' + idx"
+                  />
+                </el-table>
+              </el-col>
+            </el-row>
           </div>
-        </el-card>
-      </template>
+        </el-tab-pane>
 
-      <h3>特征重要性 Top 15</h3>
-      <EChart :option="featureImportanceOption" height="360px" />
+        <el-tab-pane label="报告" name="report">
+          <div class="tab-content">
+            <div class="action-buttons">
+              <el-button type="primary" @click="downloadReport">下载报告</el-button>
+              <el-button v-if="run.status === 'completed'" type="success" @click="downloadModel">下载模型</el-button>
+            </div>
+            <iframe v-if="results.report_path" :src="`/api/runs/${runId}/report`" class="report-iframe"></iframe>
+            <el-empty v-else description="报告尚未生成" />
+          </div>
+        </el-tab-pane>
 
-      <h3>模型排行榜</h3>
-      <div class="leaderboard-controls">
-        <el-select v-model="familyFilter" placeholder="模型族" style="width: 140px">
-          <el-option label="全部" value="all" />
-          <el-option v-for="f in families" :key="f" :label="f" :value="f" />
-        </el-select>
-        <el-select v-model="sortBy" placeholder="排序依据" style="width: 160px; margin-left: 10px">
-          <el-option v-for="col in sortableColumns" :key="col" :label="col" :value="col" />
-        </el-select>
-      </div>
-      <el-table :data="processedLeaderboard" style="width: 100%" max-height="300px">
-        <el-table-column
-          v-for="col in leaderboardColumns"
-          :key="col"
-          :prop="col"
-          :label="col"
-        />
-      </el-table>
+        <el-tab-pane label="预测" name="predict">
+          <div class="tab-content">
+            <el-row :gutter="24">
+              <el-col :xs="24" :md="12">
+                <el-card shadow="never">
+                  <template #header>
+                    <span>单条 / 批量 JSON 预测</span>
+                  </template>
+                  <el-alert
+                    title="请输入 JSON 格式的数据数组"
+                    type="info"
+                    description='例如：[{"feature1": 1, "feature2": 2}]'
+                    show-icon
+                    :closable="false"
+                  />
+                  <el-input
+                    v-model="predictInput"
+                    type="textarea"
+                    :rows="6"
+                    placeholder='[{"feature1": 1, "feature2": 2}]'
+                    style="margin-top: 15px;"
+                  />
+                  <div v-if="predictResult" class="predict-result">
+                    <h4>预测结果：</h4>
+                    <pre>{{ JSON.stringify(predictResult, null, 2) }}</pre>
+                  </div>
+                  <div style="margin-top: 12px; text-align: right;">
+                    <el-button type="primary" @click="submitPredict" :loading="predicting">预测</el-button>
+                  </div>
+                </el-card>
+              </el-col>
+              <el-col :xs="24" :md="12">
+                <el-card shadow="never">
+                  <template #header>
+                    <span>批量 CSV 预测</span>
+                  </template>
+                  <el-upload
+                    drag
+                    :auto-upload="false"
+                    :limit="1"
+                    accept=".csv"
+                    @change="handleBatchFileChange"
+                  >
+                    <el-icon class="el-icon--upload"><upload-icon /></el-icon>
+                    <div class="el-upload__text">拖拽 CSV 文件到此处，或 <em>点击上传</em></div>
+                  </el-upload>
+                  <div v-if="batchResultUrl" class="batch-result">
+                    <el-alert title="批量预测完成" type="success" :closable="false" />
+                    <el-button type="primary" :href="batchResultUrl" download="predictions.csv" tag="a" style="margin-top: 12px;">
+                      下载预测结果
+                    </el-button>
+                  </div>
+                  <div style="margin-top: 12px; text-align: right;">
+                    <el-button type="success" @click="submitBatchPredict" :loading="batchPredicting" :disabled="!batchFile">
+                      提交批量预测
+                    </el-button>
+                  </div>
+                </el-card>
+              </el-col>
+            </el-row>
+          </div>
+        </el-tab-pane>
 
-      <h3>特征重要性 Top 10</h3>
-      <el-table :data="results.feature_importance.slice(0, 10)" style="width: 100%" max-height="300px">
-        <el-table-column
-          v-for="col in importanceColumns"
-          :key="col"
-          :prop="col"
-          :label="col"
-        />
-      </el-table>
-
-      <template v-if="results.permutation_importance && results.permutation_importance.length">
-        <h3>Permutation Importance Top 15</h3>
-        <EChart :option="permutationImportanceOption" height="360px" />
-      </template>
-
-      <div class="action-buttons">
-        <el-button type="primary" @click="showPredictDialog = true">使用模型预测</el-button>
-        <el-button v-if="results.report_path" @click="downloadReport">下载报告</el-button>
-        <el-button v-if="run.status === 'completed'" type="success" @click="downloadModel">
-          下载模型
-        </el-button>
-      </div>
-
-      <template v-if="results.report_path">
-        <h3>报告预览</h3>
-        <iframe :src="`/api/runs/${runId}/report`" class="report-iframe"></iframe>
-      </template>
-
-      <template v-if="results?.error_details?.traceback">
-        <h3>错误堆栈</h3>
-        <el-input
-          v-model="results.error_details.traceback"
-          type="textarea"
-          :rows="10"
-          readonly
-        />
-      </template>
-
-      <h3>训练日志</h3>
-      <el-input
-        v-model="logs"
-        type="textarea"
-        :rows="10"
-        readonly
-        placeholder="日志加载中..."
-      />
+        <el-tab-pane label="日志" name="logs">
+          <div class="tab-content">
+            <el-input
+              ref="logTextareaRef"
+              v-model="logs"
+              type="textarea"
+              :rows="20"
+              readonly
+              placeholder="日志加载中..."
+              class="log-textarea"
+            />
+          </div>
+        </el-tab-pane>
+      </el-tabs>
     </el-card>
 
-    <!-- 预测对话框 -->
-    <el-dialog v-model="showPredictDialog" title="模型预测" width="600px">
-      <el-alert
-        title="请输入 JSON 格式的数据数组"
-        type="info"
-        description='例如：[{"feature1": 1, "feature2": 2}]'
-        show-icon
-        :closable="false"
-      />
-      <el-input
-        v-model="predictInput"
-        type="textarea"
-        :rows="6"
-        placeholder='[{"feature1": 1, "feature2": 2}]'
-        style="margin-top: 15px;"
-      />
-      <div v-if="predictResult" class="predict-result">
-        <h4>预测结果：</h4>
-        <pre>{{ JSON.stringify(predictResult, null, 2) }}</pre>
-      </div>
-      <template #footer>
-        <el-button @click="showPredictDialog = false">关闭</el-button>
-        <el-button type="primary" @click="submitPredict" :loading="predicting">预测</el-button>
-      </template>
-    </el-dialog>
+    <el-card v-else class="result-card">
+      <el-empty :description="run.status === 'running' ? '训练进行中，结果将在完成后自动加载' : '暂无训练结果'" />
+    </el-card>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { Upload as UploadIcon } from '@element-plus/icons-vue'
 import api, { runApi } from '@/api'
 import EChart from '@/components/EChart.vue'
 
@@ -292,16 +326,41 @@ const runId = route.params.id
 const run = ref({})
 const results = ref(null)
 const loading = ref(false)
+const activeTab = ref('overview')
 const showPredictDialog = ref(false)
 const predictInput = ref('')
 const predictResult = ref(null)
 const predicting = ref(false)
+const batchFile = ref(null)
+const batchPredicting = ref(false)
+const batchResultUrl = ref(null)
 const logs = ref('')
+const logTextareaRef = ref(null)
 let logTimer = null
 let evtSource = null
 
 const familyFilter = ref('all')
 const sortBy = ref('score_val')
+
+const taskTypeLabels = {
+  binary_classification: '二分类',
+  multiclass_classification: '多分类',
+  regression: '回归',
+}
+
+function taskTypeLabel(type) {
+  return taskTypeLabels[type] || type || '-'
+}
+
+function statusLabel(status) {
+  const map = {
+    pending: '等待中',
+    running: '运行中',
+    completed: '已完成',
+    failed: '失败',
+  }
+  return map[status] || status
+}
 
 const statusType = (status) => {
   const map = {
@@ -520,9 +579,19 @@ const fetchLogs = async () => {
   try {
     const res = await api.get(`/runs/${runId}/logs`)
     logs.value = res.data
+    scrollLogToBottom()
   } catch (error) {
     console.error('获取日志失败:', error)
   }
+}
+
+const scrollLogToBottom = () => {
+  nextTick(() => {
+    const textarea = logTextareaRef.value?.$el?.querySelector('textarea')
+    if (textarea) {
+      textarea.scrollTop = textarea.scrollHeight
+    }
+  })
 }
 
 const loadData = async () => {
@@ -547,6 +616,36 @@ const submitPredict = async () => {
     ElMessage.error('预测失败: ' + error.message)
   } finally {
     predicting.value = false
+  }
+}
+
+const handleBatchFileChange = (file) => {
+  batchFile.value = file.raw
+  if (batchResultUrl.value) {
+    URL.revokeObjectURL(batchResultUrl.value)
+    batchResultUrl.value = null
+  }
+}
+
+const submitBatchPredict = async () => {
+  if (!batchFile.value) {
+    ElMessage.warning('请选择 CSV 文件')
+    return
+  }
+  batchPredicting.value = true
+  try {
+    const formData = new FormData()
+    formData.append('file', batchFile.value)
+    const res = await api.post(`/runs/${runId}/predict/batch`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      responseType: 'blob',
+    })
+    batchResultUrl.value = URL.createObjectURL(res.data)
+    ElMessage.success('批量预测完成')
+  } catch (error) {
+    ElMessage.error('批量预测失败: ' + (error.message || '未知错误'))
+  } finally {
+    batchPredicting.value = false
   }
 }
 
@@ -617,6 +716,8 @@ const closeEventSource = () => {
   }
 }
 
+watch(logs, scrollLogToBottom)
+
 onMounted(async () => {
   await loadData()
   await fetchLogs()
@@ -633,12 +734,13 @@ onMounted(async () => {
 onUnmounted(() => {
   closeEventSource()
   if (logTimer) clearInterval(logTimer)
+  if (batchResultUrl.value) URL.revokeObjectURL(batchResultUrl.value)
 })
 </script>
 
 <style scoped>
 .run-detail {
-  padding: 20px 0;
+  padding: 20px;
 }
 
 .info-card,
@@ -652,44 +754,40 @@ onUnmounted(() => {
   align-items: center;
 }
 
-.metric-row {
-  margin: 20px 0;
+.error-text {
+  color: #f56c6c;
 }
 
-.metric-item {
-  text-align: center;
-  padding: 15px;
-  background-color: #f5f7fa;
-  border-radius: 4px;
+.tab-content {
+  padding: 12px 4px;
 }
 
-.metric-item-train {
-  background-color: #fdf6ec;
-}
-
-.metric-label {
-  font-size: 12px;
-  color: #909399;
-  margin-bottom: 8px;
-}
-
-.metric-value {
-  font-size: 20px;
-  font-weight: bold;
-  color: #409eff;
-}
-
-.result-card h3 {
-  margin-top: 30px;
-  margin-bottom: 15px;
+.section-title {
+  margin: 20px 0 14px;
   color: #303133;
   border-left: 4px solid #409eff;
   padding-left: 10px;
+  font-size: 16px;
+}
+
+.metric-row {
+  margin-bottom: 8px;
+}
+
+.leaderboard-controls {
+  margin-bottom: 12px;
 }
 
 .action-buttons {
-  margin-top: 30px;
-  text-align: center;
+  margin-bottom: 16px;
+}
+
+.report-iframe {
+  width: 100%;
+  height: 600px;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+  background-color: #fff;
 }
 
 .predict-result {
@@ -704,16 +802,8 @@ onUnmounted(() => {
   white-space: pre-wrap;
 }
 
-.report-iframe {
-  width: 100%;
-  height: 600px;
-  border: 1px solid #ebeef5;
-  border-radius: 4px;
-  background-color: #fff;
-}
-
-.leaderboard-controls {
-  margin-bottom: 12px;
+.batch-result {
+  margin-top: 16px;
 }
 
 .interpretation-card {
@@ -746,5 +836,29 @@ onUnmounted(() => {
   margin-bottom: 6px;
   line-height: 1.6;
   color: #606266;
+}
+
+.metric-item {
+  text-align: center;
+  padding: 15px;
+  background-color: #f5f7fa;
+  border-radius: 4px;
+}
+
+.metric-label {
+  font-size: 12px;
+  color: #909399;
+  margin-bottom: 8px;
+}
+
+.metric-value {
+  font-size: 20px;
+  font-weight: bold;
+  color: #409eff;
+}
+
+.log-textarea :deep(textarea) {
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
 }
 </style>

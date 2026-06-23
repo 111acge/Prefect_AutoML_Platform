@@ -188,12 +188,24 @@ def _is_sequential(series: pd.Series) -> bool:
         return False
 
 
-def infer_schema(df: pd.DataFrame, target_column: str | None = None) -> DatasetSchema:
-    """从 DataFrame 推断 Schema。"""
+def infer_schema(
+    df: pd.DataFrame,
+    target_column: str | None = None,
+    sample_size: int = 5000,
+) -> DatasetSchema:
+    """从 DataFrame 推断 Schema。
+
+    对大表先采样再推断字段类型，避免 pd.to_datetime / nunique 在全量数据上耗时过长；
+    约束（min/max/allowed_values）仍基于全量计算，保证准确性。
+    """
     fields = []
+    use_sample = len(df) > sample_size
+    sample_df = df.sample(n=sample_size, random_state=42) if use_sample else df
+
     for col in df.columns:
         series = df[col]
-        field_type = infer_field_type(series, name=col)
+        sample_series = sample_df[col]
+        field_type = infer_field_type(sample_series, name=col)
 
         constraints = FieldConstraint()
         if field_type in (FieldType.NUMERIC, FieldType.DATETIME):

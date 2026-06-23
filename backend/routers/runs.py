@@ -38,7 +38,7 @@ from services.storage import storage_service
 from services.step_manifest import StepManifest
 from services.step_runner import STEP_ORDER, initialize_run_steps
 from services.training_executor import training_executor
-from services.schema_service import build_schema_from_file, validate_against_schema
+from services.schema_service import build_schema_from_file, infer_schema, validate_against_schema
 
 router = APIRouter(tags=["runs"])
 
@@ -124,6 +124,12 @@ async def create_run(
     if not task_type:
         raise HTTPException(status_code=400, detail="无法确定任务类型，请在上传数据集时指定或更新数据集")
 
+    # 一次性加载数据，避免重复 I/O
+    try:
+        df = await asyncio.to_thread(load_dataframe, dataset.file_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"加载数据集失败: {str(e)}")
+
     # 校验任务类型与目标列是否匹配
     try:
         await asyncio.to_thread(
@@ -131,22 +137,15 @@ async def create_run(
             dataset.file_path,
             target_column,
             task_type,
+            df,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
     # Schema 校验
     try:
-        schema = await asyncio.to_thread(
-            build_schema_from_file,
-            dataset.file_path,
-            target_column,
-        )
-        errors = await asyncio.to_thread(
-            validate_against_schema,
-            load_dataframe(dataset.file_path),
-            schema,
-        )
+        schema = await asyncio.to_thread(infer_schema, df, target_column)
+        errors = await asyncio.to_thread(validate_against_schema, df, schema)
         if errors:
             raise HTTPException(
                 status_code=400,
@@ -261,15 +260,23 @@ async def create_run(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _compute_file_hash(file_path: str | None) -> str:
+    """分块计算文件 MD5，避免大文件一次性读入内存。"""
+    if not file_path:
+        return ""
+    try:
+        h = hashlib.md5()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return ""
+
+
 def _build_config_snapshot(dataset: Dataset, request: RunCreate) -> Dict[str, Any]:
     """构建训练任务配置快照，保证可复现。"""
-    file_hash = ""
-    if dataset.file_path:
-        try:
-            with open(dataset.file_path, "rb") as f:
-                file_hash = hashlib.md5(f.read()).hexdigest()
-        except Exception:
-            pass
+    file_hash = _compute_file_hash(dataset.file_path)
 
     return {
         "dataset_id": dataset.id,
@@ -287,11 +294,17 @@ def _build_config_snapshot(dataset: Dataset, request: RunCreate) -> Dict[str, An
     }
 
 
-def _validate_task_type(file_path: str, target_column: str, task_type: str) -> None:
+def _validate_task_type(
+    file_path: str,
+    target_column: str,
+    task_type: str,
+    df: pd.DataFrame | None = None,
+) -> None:
     """校验任务类型与目标列是否匹配，并拦截退化数据集。"""
     import pandas as pd
 
-    df = load_dataframe(file_path)
+    if df is None:
+        df = load_dataframe(file_path)
     if target_column not in df.columns:
         raise ValueError(f"目标列 '{target_column}' 不存在")
 
@@ -618,13 +631,84 @@ async def get_artifact(run_id: str, artifact_name: str, db: AsyncSession = Depen
         path = file_artifacts[artifact_name]
         if not path.exists():
             raise HTTPException(status_code=404, detail="产物不存在")
+        media_type_map = {
+            ".csv": "text/csv",
+            ".html": "text/html",
+            ".parquet": "application/octet-stream",
+            ".joblib": "application/octet-stream",
+        }
         return FileResponse(
             str(path),
             filename=path.name,
-            media_type="application/octet-stream",
+            media_type=media_type_map.get(path.suffix.lower(), "application/octet-stream"),
         )
 
     raise HTTPException(status_code=400, detail=f"未知产物名称: {artifact_name}")
+
+
+@router.get("/{run_id}/artifacts/{artifact_name}/preview")
+async def preview_artifact(
+    run_id: str,
+    artifact_name: str,
+    n: int = 20,
+    db: AsyncSession = Depends(get_db),
+):
+    """预览表格类产物的前 N 行（CSV / Parquet）。"""
+    result = await db.execute(select(Run).where(Run.id == run_id))
+    run = result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    manifest = StepManifest(run.output_dir)
+    file_artifacts = {
+        "report": manifest.report_path,
+        "preprocessor": manifest.preprocessor_path,
+        "feature_columns": manifest.feature_columns_path,
+        "raw": manifest.raw_data_path,
+        "train_raw": manifest.train_raw_path,
+        "val_raw": manifest.val_raw_path,
+        "test_raw": manifest.test_raw_path,
+        "train_transformed": manifest.train_transformed_path,
+        "val_transformed": manifest.val_transformed_path,
+        "test_transformed": manifest.test_transformed_path,
+        "sampled_train": manifest.sampled_train_path,
+        "leaderboard": manifest.leaderboard_path,
+        "feature_importance": manifest.feature_importance_path,
+        "permutation_importance": manifest.permutation_importance_path,
+    }
+
+    if artifact_name not in file_artifacts:
+        raise HTTPException(status_code=400, detail="该产物不支持预览")
+
+    path = file_artifacts[artifact_name]
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="产物不存在")
+
+    suffix = path.suffix.lower()
+    if suffix not in {".csv", ".parquet"}:
+        raise HTTPException(status_code=400, detail="仅支持 CSV / Parquet 格式预览")
+
+    try:
+        if suffix == ".csv":
+            df = pd.read_csv(path, nrows=n)
+        else:
+            df = pd.read_parquet(path)
+        preview_df = df.head(n)
+        rows = (
+            preview_df.astype(object)
+            .where(preview_df.notna(), None)
+            .to_dict(orient="records")
+        )
+        columns = [{"name": col, "type": str(df[col].dtype)} for col in df.columns]
+        return {
+            "columns": columns,
+            "rows": rows,
+            "total": len(df),
+            "truncated": len(df) > n,
+        }
+    except Exception as e:
+        logger.exception("预览产物失败: %s", artifact_name)
+        raise HTTPException(status_code=500, detail=f"预览产物失败: {e}")
 
 
 @router.get("/{run_id}/events")

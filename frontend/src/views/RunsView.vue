@@ -53,14 +53,17 @@
             <el-button size="small" type="danger" @click="deleteRun(row)">删除</el-button>
           </template>
         </el-table-column>
+        <template #empty>
+          <el-empty description="暂无训练任务" />
+        </template>
       </el-table>
     </el-card>
 
     <!-- 新建训练任务对话框 -->
-    <el-dialog v-model="showCreateDialog" title="新建训练任务" width="500px">
-      <el-form :model="createForm" label-width="120px">
+    <el-dialog v-model="showCreateDialog" title="新建训练任务" width="520px">
+      <el-form label-width="80px" style="margin-bottom: 16px;">
         <el-form-item label="数据集">
-          <el-select v-model="createForm.dataset_id" style="width: 100%" placeholder="请选择数据集">
+          <el-select v-model="selectedDatasetId" style="width: 100%" placeholder="请选择数据集">
             <el-option
               v-for="dataset in datasets"
               :key="dataset.id"
@@ -69,84 +72,24 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="目标列">
-          <el-select v-model="createForm.target_column" style="width: 100%" placeholder="请选择目标列">
-            <el-option
-              v-for="col in datasetColumns"
-              :key="col"
-              :label="col"
-              :value="col"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="任务类型">
-          <el-select v-model="createForm.task_type" style="width: 100%">
-            <el-option label="二分类" value="binary_classification" />
-            <el-option label="多分类" value="multiclass_classification" />
-            <el-option label="回归" value="regression" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="快速模式">
-          <el-radio-group v-model="quickMode" @change="onQuickModeChange">
-            <el-radio-button label="quick">快速体验</el-radio-button>
-            <el-radio-button label="standard">标准</el-radio-button>
-            <el-radio-button label="deep">深度</el-radio-button>
-            <el-radio-button label="unlimited">不限制</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item label="时间预算(分钟)">
-          <div style="display: flex; align-items: center; gap: 12px;">
-            <el-input-number
-              v-model="createForm.time_budget_minutes"
-              :min="0.1"
-              :max="1440"
-              :disabled="unlimitedTime"
-              :controls="false"
-              style="width: 160px"
-            />
-            <el-checkbox v-model="unlimitedTime">无限制</el-checkbox>
-          </div>
-        </el-form-item>
-        <el-form-item label="Preset">
-          <el-select v-model="createForm.preset" style="width: 100%">
-            <el-option label="自动选择（推荐）" value="auto" />
-            <el-option label="medium_quality" value="medium_quality" />
-            <el-option label="best_quality" value="best_quality" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="随机种子">
-          <el-input-number v-model="createForm.seed" :min="0" :controls="false" style="width: 100%" placeholder="留空则不固定" />
-        </el-form-item>
-        <el-form-item label="特征工程">
-          <el-switch
-            v-model="createForm.feature_engineering_enabled"
-            active-text="启用高级特征工程"
-            inactive-text="仅基础清洗"
-          />
-        </el-form-item>
-        <el-form-item label="执行模式">
-          <el-radio-group v-model="createForm.mode">
-            <el-radio-button label="auto">一键训练</el-radio-button>
-            <el-radio-button label="step">分步 Pipeline</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
       </el-form>
-      <template #footer>
-        <el-button @click="showCreateDialog = false">取消</el-button>
-        <el-button type="primary" @click="submitCreate" :loading="creating">
-          {{ createForm.mode === 'step' ? '创建 Pipeline' : '创建' }}
-        </el-button>
-      </template>
+      <TrainConfigForm
+        :dataset="selectedDataset"
+        :loading="creating"
+        @submit="submitCreate"
+        @cancel="showCreateDialog = false"
+      />
     </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { runApi, datasetApi } from '@/api'
+import TrainConfigForm from '@/components/TrainConfigForm.vue'
 
 const router = useRouter()
 const runs = ref([])
@@ -156,26 +99,9 @@ const showCreateDialog = ref(false)
 const creating = ref(false)
 let timer = null
 
-const datasetColumns = ref([])
-const unlimitedTime = ref(false)
-const quickMode = ref('standard')
-
-const QUICK_MODES = {
-  quick: { preset: 'good_quality', time_budget_minutes: 1 },
-  standard: { preset: 'auto', time_budget_minutes: 10 },
-  deep: { preset: 'best_quality', time_budget_minutes: 30 },
-  unlimited: { preset: 'best_quality', time_budget_minutes: null },
-}
-
-const createForm = ref({
-  dataset_id: '',
-  target_column: '',
-  task_type: 'binary_classification',
-  time_budget_minutes: 10,
-  preset: 'auto',
-  seed: null,
-  feature_engineering_enabled: true,
-  mode: 'auto',
+const selectedDatasetId = ref('')
+const selectedDataset = computed(() => {
+  return datasets.value.find((d) => d.id === selectedDatasetId.value) || null
 })
 
 const statusType = (status) => {
@@ -209,22 +135,18 @@ const fetchDatasets = async () => {
   }
 }
 
-const submitCreate = async () => {
-  if (!createForm.value.dataset_id || !createForm.value.target_column) {
+const submitCreate = async (payload) => {
+  if (!payload.dataset_id || !payload.target_column) {
     ElMessage.warning('请选择数据集和目标列')
     return
   }
 
   creating.value = true
   try {
-    const payload = { ...createForm.value }
-    if (unlimitedTime.value) {
-      payload.time_budget_minutes = null
-    }
     const res = await runApi.create(payload)
     ElMessage.success(payload.mode === 'step' ? 'Pipeline 草稿已创建' : '训练任务已创建')
     showCreateDialog.value = false
-    resetCreateForm()
+    selectedDatasetId.value = ''
     if (payload.mode === 'step') {
       router.push(`/runs/${res.data.id}/pipeline`)
     } else {
@@ -236,42 +158,6 @@ const submitCreate = async () => {
     creating.value = false
   }
 }
-
-const onQuickModeChange = (mode) => {
-  const cfg = QUICK_MODES[mode]
-  if (!cfg) return
-  createForm.value.preset = cfg.preset
-  createForm.value.time_budget_minutes = cfg.time_budget_minutes ?? 10
-  unlimitedTime.value = cfg.time_budget_minutes === null
-}
-
-const resetCreateForm = () => {
-  createForm.value = {
-    dataset_id: '',
-    target_column: '',
-    task_type: 'binary_classification',
-    time_budget_minutes: 10,
-    preset: 'auto',
-    seed: null,
-    feature_engineering_enabled: true,
-    mode: 'auto',
-  }
-  unlimitedTime.value = false
-  quickMode.value = 'standard'
-  datasetColumns.value = []
-}
-
-watch(
-  () => createForm.value.dataset_id,
-  (datasetId) => {
-    if (!datasetId) {
-      datasetColumns.value = []
-      return
-    }
-    const dataset = datasets.value.find((d) => d.id === datasetId)
-    datasetColumns.value = dataset ? Object.keys(dataset.schema_info?.field_types || {}) : []
-  }
-)
 
 const viewDetail = (row) => {
   router.push(`/runs/${row.id}`)
