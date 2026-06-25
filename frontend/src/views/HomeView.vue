@@ -6,9 +6,14 @@
           <h1>Prefect AutoML Platform</h1>
           <p class="subtitle">端到端全自动机器学习平台</p>
           <p>基于 Prefect 工作流编排 + AutoGluon 模型内核，实现数据上传、自动训练、评估与预测。</p>
-          <el-button type="primary" size="large" @click="$router.push('/datasets')">
-            开始上传数据
-          </el-button>
+          <div class="welcome-actions">
+            <el-button type="primary" size="large" @click="$router.push('/datasets')">
+              开始上传数据
+            </el-button>
+            <el-button size="large" @click="$router.push('/datasets')">查看数据集</el-button>
+            <el-button size="large" @click="$router.push('/runs')">查看训练任务</el-button>
+            <el-button size="large" @click="$router.push('/compare')">模型对比</el-button>
+          </div>
         </el-card>
       </el-col>
     </el-row>
@@ -18,7 +23,7 @@
         <el-card>
           <template #header>
             <div class="card-header">
-              <el-icon><Upload /></el-icon>
+              <el-icon><component :is="Upload" /></el-icon>
               <span>数据接入</span>
             </div>
           </template>
@@ -29,7 +34,7 @@
         <el-card>
           <template #header>
             <div class="card-header">
-              <el-icon><Cpu /></el-icon>
+              <el-icon><component :is="Cpu" /></el-icon>
               <span>自动训练</span>
             </div>
           </template>
@@ -40,7 +45,7 @@
         <el-card>
           <template #header>
             <div class="card-header">
-              <el-icon><TrendCharts /></el-icon>
+              <el-icon><component :is="TrendCharts" /></el-icon>
               <span>结果分析</span>
             </div>
           </template>
@@ -54,7 +59,7 @@
         <el-card>
           <template #header>
             <div class="card-header">
-              <el-icon><Document /></el-icon>
+              <el-icon><component :is="Document" /></el-icon>
               <span>如何解读训练报告</span>
             </div>
           </template>
@@ -137,6 +142,14 @@ import { Upload, Cpu, TrendCharts, Document } from '@element-plus/icons-vue'
   font-size: 18px;
   color: #606266;
   margin-bottom: 20px;
+}
+
+.welcome-actions {
+  margin-top: 24px;
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .feature-row {

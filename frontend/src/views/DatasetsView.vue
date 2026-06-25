@@ -6,10 +6,10 @@
           <span>数据集管理</span>
           <div>
             <el-button type="success" @click="trainDefaultDataset" :loading="trainingDefault">
-              <el-icon><Cpu /></el-icon> 使用默认数据集训练
+              <el-icon><component :is="Cpu" /></el-icon> 使用默认数据集训练
             </el-button>
             <el-button type="primary" @click="showUploadDialog = true">
-              <el-icon><Upload /></el-icon> 上传数据集
+              <el-icon><component :is="Upload" /></el-icon> 上传数据集
             </el-button>
           </div>
         </div>

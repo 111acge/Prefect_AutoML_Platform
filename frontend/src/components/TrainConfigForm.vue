@@ -1,6 +1,6 @@
 <template>
-  <el-form :model="form" label-width="120px">
-    <el-form-item label="目标列">
+  <el-form ref="formRef" :model="form" :rules="rules" label-width="120px">
+    <el-form-item label="目标列" prop="target_column">
       <el-select v-model="form.target_column" style="width: 100%" placeholder="请选择目标列">
         <el-option
           v-for="col in columns"
@@ -11,7 +11,7 @@
       </el-select>
     </el-form-item>
 
-    <el-form-item label="任务类型">
+    <el-form-item label="任务类型" prop="task_type">
       <el-select v-model="form.task_type" style="width: 100%">
         <el-option label="二分类" value="binary_classification" />
         <el-option label="多分类" value="multiclass_classification" />
@@ -96,6 +96,7 @@ const props = defineProps({
 
 const emit = defineEmits(['submit', 'cancel'])
 
+const formRef = ref(null)
 const columns = ref([])
 const unlimitedTime = ref(false)
 const quickMode = ref('standard')
@@ -160,11 +161,15 @@ function onQuickModeChange(mode) {
   unlimitedTime.value = cfg.time_budget_minutes === null
 }
 
-function submit() {
-  if (!form.value.target_column) {
-    ElMessage.warning('请选择目标列')
-    return
-  }
+const rules = {
+  target_column: [{ required: true, message: '请选择目标列', trigger: 'change' }],
+  task_type: [{ required: true, message: '请选择任务类型', trigger: 'change' }],
+}
+
+async function submit() {
+  if (!formRef.value) return
+  const valid = await formRef.value.validate().catch(() => false)
+  if (!valid) return
   const payload = { ...form.value }
   if (unlimitedTime.value) {
     payload.time_budget_minutes = null

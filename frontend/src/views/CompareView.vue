@@ -11,7 +11,7 @@
       </template>
 
       <el-alert
-        title="请选择 2~10 个已完成的训练任务进行对比"
+        title="请选择 2~10 个已完成的训练任务进行对比（仅显示已完成任务）"
         type="info"
         :closable="false"
         style="margin-bottom: 16px;"
@@ -126,10 +126,12 @@ const fetchRuns = async () => {
   runsLoading.value = true
   try {
     const res = await runApi.list()
-    runs.value = res.data.map((run) => ({
-      ...run,
-      dataset_name: run.config?.snapshot?.dataset_name || run.dataset_id,
-    }))
+    runs.value = res.data
+      .filter((run) => run.status === 'completed')
+      .map((run) => ({
+        ...run,
+        dataset_name: run.config?.snapshot?.dataset_name || run.dataset_id,
+      }))
   } catch (error) {
     ElMessage.error('获取任务列表失败: ' + error.message)
   } finally {

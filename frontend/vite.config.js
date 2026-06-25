@@ -3,7 +3,7 @@ import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
 
 // https://vitejs.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [vue()],
   resolve: {
     alias: {
@@ -25,6 +25,8 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 8084,
+    // 生产构建不应启用 HMR；开发模式下也关闭错误覆盖层，避免把完整堆栈暴露给终端用户
+    hmr: mode === 'production' ? false : { overlay: false },
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8001',
@@ -36,4 +38,4 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 8084,
   },
-})
+}))

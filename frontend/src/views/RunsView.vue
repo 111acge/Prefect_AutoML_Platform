@@ -6,7 +6,7 @@
           <span>训练任务</span>
           <div>
             <el-button type="primary" @click="showCreateDialog = true">
-              <el-icon><Plus /></el-icon> 新建训练任务
+              <el-icon><component :is="Plus" /></el-icon> 新建训练任务
             </el-button>
             <el-button @click="fetchRuns">刷新</el-button>
           </div>
@@ -20,16 +20,12 @@
           </template>
         </el-table-column>
         <el-table-column prop="dataset_id" label="数据集ID" width="220" />
-        <el-table-column prop="status" label="状态" width="110">
+        <el-table-column prop="status" label="状态" width="140">
           <template #default="{ row }">
-            <el-tag :type="statusType(row.status)">{{ row.status }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="失败原因" min-width="220" show-overflow-tooltip>
-          <template #default="{ row }">
-            <span v-if="row.error_message" class="error-text">{{ row.error_message }}</span>
-            <span v-else-if="row.status === 'failed'" class="error-text">-</span>
-            <span v-else>-</span>
+            <el-tooltip v-if="row.status === 'failed' && row.error_message" :content="row.error_message" placement="top">
+              <el-tag :type="statusType(row.status)">{{ row.status }}</el-tag>
+            </el-tooltip>
+            <el-tag v-else :type="statusType(row.status)">{{ row.status }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="时间预算(分钟)">
