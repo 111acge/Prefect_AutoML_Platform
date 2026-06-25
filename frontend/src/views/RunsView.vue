@@ -13,14 +13,23 @@
         </div>
       </template>
 
-      <el-table :data="runs" v-loading="loading" style="width: 100%">
-        <el-table-column prop="id" label="ID" width="220">
+      <div class="table-toolbar">
+        <el-input
+          v-model="searchQuery"
+          placeholder="搜索任务 ID 或数据集"
+          style="width: 300px"
+          clearable
+        />
+      </div>
+
+      <el-table :data="pagedRuns" v-loading="loading" style="width: 100%">
+        <el-table-column prop="id" label="ID" width="220" sortable>
           <template #default="{ row }">
             <el-link type="primary" @click="viewDetail(row)">{{ row.id }}</el-link>
           </template>
         </el-table-column>
-        <el-table-column prop="dataset_id" label="数据集ID" width="220" />
-        <el-table-column prop="status" label="状态" width="140">
+        <el-table-column prop="dataset_id" label="数据集ID" width="220" sortable />
+        <el-table-column prop="status" label="状态" width="140" sortable>
           <template #default="{ row }">
             <el-tooltip v-if="row.status === 'failed' && row.error_message" :content="row.error_message" placement="top">
               <el-tag :type="statusType(row.status)">{{ row.status }}</el-tag>
@@ -28,18 +37,18 @@
             <el-tag v-else :type="statusType(row.status)">{{ row.status }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="时间预算(分钟)">
+        <el-table-column label="时间预算(分钟)" sortable>
           <template #default="{ row }">
             {{ row.time_budget_minutes ?? '无限制' }}
           </template>
         </el-table-column>
-        <el-table-column label="随机种子">
+        <el-table-column label="随机种子" sortable>
           <template #default="{ row }">
             {{ row.config?.seed ?? '-' }}
           </template>
         </el-table-column>
-        <el-table-column prop="primary_metric" label="评估指标" />
-        <el-table-column prop="created_at" label="创建时间">
+        <el-table-column prop="primary_metric" label="评估指标" sortable />
+        <el-table-column prop="created_at" label="创建时间" sortable>
           <template #default="{ row }">
             {{ formatDate(row.created_at) }}
           </template>
@@ -53,13 +62,22 @@
           <el-empty description="暂无训练任务" />
         </template>
       </el-table>
+
+      <el-pagination
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :page-sizes="[10, 20, 50]"
+        :total="filteredRuns.length"
+        layout="total, sizes, prev, pager, next"
+        style="margin-top: 16px; justify-content: flex-end"
+      />
     </el-card>
 
     <!-- 新建训练任务对话框 -->
     <el-dialog v-model="showCreateDialog" title="新建训练任务" width="520px">
-      <el-form label-width="80px" style="margin-bottom: 16px;">
-        <el-form-item label="数据集">
-          <el-select v-model="selectedDatasetId" style="width: 100%" placeholder="请选择数据集">
+      <el-form ref="datasetFormRef" :model="datasetForm" :rules="datasetRules" label-width="80px" style="margin-bottom: 16px;">
+        <el-form-item label="数据集" prop="dataset_id">
+          <el-select v-model="datasetForm.dataset_id" style="width: 100%" placeholder="请选择数据集" @change="onDatasetChange">
             <el-option
               v-for="dataset in datasets"
               :key="dataset.id"
@@ -95,10 +113,36 @@ const showCreateDialog = ref(false)
 const creating = ref(false)
 let timer = null
 
-const selectedDatasetId = ref('')
+const datasetFormRef = ref(null)
+const datasetForm = ref({ dataset_id: '' })
+const datasetRules = {
+  dataset_id: [{ required: true, message: '请选择数据集', trigger: 'change' }],
+}
 const selectedDataset = computed(() => {
-  return datasets.value.find((d) => d.id === selectedDatasetId.value) || null
+  return datasets.value.find((d) => d.id === datasetForm.value.dataset_id) || null
 })
+
+const searchQuery = ref('')
+const currentPage = ref(1)
+const pageSize = ref(10)
+
+const filteredRuns = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q) return runs.value
+  return runs.value.filter((r) => {
+    const datasetName = r.config?.snapshot?.dataset_name || ''
+    return r.id.toLowerCase().includes(q) || datasetName.toLowerCase().includes(q) || r.status.toLowerCase().includes(q)
+  })
+})
+
+const pagedRuns = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return filteredRuns.value.slice(start, start + pageSize.value)
+})
+
+const onDatasetChange = () => {
+  datasetFormRef.value?.clearValidate('dataset_id')
+}
 
 const statusType = (status) => {
   const map = {
@@ -132,8 +176,10 @@ const fetchDatasets = async () => {
 }
 
 const submitCreate = async (payload) => {
-  if (!payload.dataset_id || !payload.target_column) {
-    ElMessage.warning('请选择数据集和目标列')
+  const valid = await datasetFormRef.value?.validate().catch(() => false)
+  if (!valid) return
+  if (!payload.target_column) {
+    ElMessage.warning('请选择目标列')
     return
   }
 
@@ -142,7 +188,7 @@ const submitCreate = async (payload) => {
     const res = await runApi.create(payload)
     ElMessage.success(payload.mode === 'step' ? 'Pipeline 草稿已创建' : '训练任务已创建')
     showCreateDialog.value = false
-    selectedDatasetId.value = ''
+    datasetForm.value.dataset_id = ''
     if (payload.mode === 'step') {
       router.push(`/runs/${res.data.id}/pipeline`)
     } else {
@@ -161,7 +207,7 @@ const viewDetail = (row) => {
 
 const deleteRun = async (row) => {
   try {
-    await ElMessageBox.confirm('确定删除该训练任务吗？', '提示', { type: 'warning' })
+    await ElMessageBox.confirm('确定删除该训练任务吗？', '提示', { type: 'warning', confirmButtonText: '确定', cancelButtonText: '取消' })
     await runApi.delete(row.id)
     ElMessage.success('删除成功')
     await fetchRuns()
@@ -196,6 +242,13 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.table-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
 }
 
 .error-text {

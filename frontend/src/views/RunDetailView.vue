@@ -35,6 +35,50 @@
       </el-descriptions>
     </el-card>
 
+    <el-card v-if="!isTerminal(run.status) || run.status === 'failed'" class="progress-card">
+      <template #header>
+        <div class="card-header">
+          <span>训练进度</span>
+          <el-tag :type="statusType(run.status)">{{ statusLabel(run.status) }}</el-tag>
+        </div>
+      </template>
+
+      <el-progress
+        :percentage="progressPercentage"
+        :status="run.status === 'failed' ? 'exception' : ''"
+        :stroke-width="18"
+        striped
+        striped-flow
+      />
+
+      <div class="progress-steps" v-if="steps.length">
+        <div
+          v-for="step in steps"
+          :key="step.step_name"
+          class="progress-step"
+          :class="step.status"
+        >
+          <el-icon v-if="step.status === 'completed'" class="step-icon success"><component :is="Check" /></el-icon>
+          <el-icon v-else-if="step.status === 'running'" class="step-icon running"><component :is="Loading" /></el-icon>
+          <el-icon v-else-if="step.status === 'failed'" class="step-icon failed"><component :is="CloseBold" /></el-icon>
+          <el-icon v-else class="step-icon pending"><component :is="Minus" /></el-icon>
+          <span class="step-name">{{ step.step_name }}</span>
+          <el-tag size="small" :type="statusType(step.status)">{{ step.status }}</el-tag>
+        </div>
+      </div>
+
+      <h3 class="section-title">实时日志</h3>
+      <el-input
+        ref="logTextareaRef"
+        v-model="logs"
+        type="textarea"
+        :rows="12"
+        readonly
+        placeholder="日志加载中..."
+        class="log-textarea"
+      />
+    </el-card>
+
     <el-card v-if="results" class="result-card">
       <el-tabs v-model="activeTab" type="border-card">
         <el-tab-pane label="概览" name="overview">
@@ -316,7 +360,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Upload as UploadIcon } from '@element-plus/icons-vue'
+import { Upload as UploadIcon, Check, Loading, CloseBold, Minus } from '@element-plus/icons-vue'
 import api, { runApi } from '@/api'
 import EChart from '@/components/EChart.vue'
 
@@ -336,6 +380,7 @@ const batchPredicting = ref(false)
 const batchResultUrl = ref(null)
 const logs = ref('')
 const logTextareaRef = ref(null)
+const steps = ref([])
 let logTimer = null
 let evtSource = null
 
@@ -585,6 +630,21 @@ const fetchLogs = async () => {
   }
 }
 
+const fetchSteps = async () => {
+  try {
+    const res = await runApi.getSteps(runId)
+    steps.value = res.data
+  } catch (error) {
+    console.error('获取步骤状态失败:', error)
+  }
+}
+
+const progressPercentage = computed(() => {
+  if (!steps.value.length) return 0
+  const completed = steps.value.filter((s) => s.status === 'completed').length
+  return Math.round((completed / steps.value.length) * 100)
+})
+
 const scrollLogToBottom = () => {
   nextTick(() => {
     const textarea = logTextareaRef.value?.$el?.querySelector('textarea')
@@ -677,6 +737,7 @@ const handleStatusEvent = (payload) => {
     run.value.error_message = payload.error_message
   }
   fetchLogs()
+  fetchSteps()
   if (run.value.status === 'completed' && !results.value) {
     fetchResults()
   }
@@ -720,6 +781,7 @@ watch(logs, scrollLogToBottom)
 
 onMounted(async () => {
   await loadData()
+  await fetchSteps()
   await fetchLogs()
   if (!isTerminal(run.value.status)) {
     connectEvents()
@@ -727,6 +789,7 @@ onMounted(async () => {
   logTimer = setInterval(() => {
     if (!isTerminal(run.value.status)) {
       fetchLogs()
+      fetchSteps()
     }
   }, 5000)
 })
@@ -744,8 +807,67 @@ onUnmounted(() => {
 }
 
 .info-card,
-.result-card {
+.result-card,
+.progress-card {
   margin-top: 20px;
+}
+
+.progress-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.progress-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  background-color: #f5f7fa;
+  border: 1px solid #ebeef5;
+}
+
+.progress-step.running {
+  background-color: #fdf6ec;
+  border-color: #f5dab1;
+}
+
+.progress-step.failed {
+  background-color: #fef0f0;
+  border-color: #fde2e2;
+}
+
+.progress-step.completed {
+  background-color: #f0f9eb;
+  border-color: #d1edc4;
+}
+
+.step-icon {
+  font-size: 16px;
+}
+
+.step-icon.success {
+  color: #67c23a;
+}
+
+.step-icon.running {
+  color: #e6a23c;
+}
+
+.step-icon.failed {
+  color: #f56c6c;
+}
+
+.step-icon.pending {
+  color: #c0c4cc;
+}
+
+.step-name {
+  font-size: 13px;
+  color: #606266;
+  text-transform: capitalize;
 }
 
 .card-header {

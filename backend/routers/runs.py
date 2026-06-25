@@ -438,15 +438,44 @@ async def compare_runs(request: RunCompareRequest, db: AsyncSession = Depends(ge
             )
         )
 
+    # 如果未指定主指标，尝试从所有 Run 的 metrics 中找共同指标
+    if not metric_name:
+        common_keys = None
+        for item in items:
+            keys = set(item.metrics.keys())
+            if common_keys is None:
+                common_keys = keys
+            else:
+                common_keys &= keys
+        if common_keys:
+            # 优先使用 accuracy / log_loss / root_mean_squared_error
+            preferred = ["accuracy", "log_loss", "root_mean_squared_error", "r2", "rmse"]
+            for p in preferred:
+                if p in common_keys:
+                    metric_name = p
+                    break
+            if not metric_name:
+                metric_name = sorted(common_keys)[0]
+
     best_run_id = None
-    if metric_name:
+    best_score = None
+    # 优先使用 best_model_score 选择最佳 Run
+    scored_by_model = [
+        (item.run_id, item.best_model_score)
+        for item in items
+        if item.best_model_score is not None
+    ]
+    if scored_by_model:
+        # score_val 越大越好（AutoGluon 已对损失类指标取负）
+        best_run_id, best_score = max(scored_by_model, key=lambda x: x[1])
+    elif metric_name:
         scored = [
             (item.run_id, item.metrics.get(metric_name))
             for item in items
             if item.metrics.get(metric_name) is not None
         ]
         if scored:
-            best_run_id = max(scored, key=lambda x: x[1])[0]
+            best_run_id, best_score = max(scored, key=lambda x: x[1])
 
     return RunCompareResponse(runs=items, metric_name=metric_name, best_run_id=best_run_id)
 

@@ -17,17 +17,26 @@
         style="margin-bottom: 16px;"
       />
 
+      <div class="table-toolbar">
+        <el-input
+          v-model="searchQuery"
+          placeholder="搜索任务 ID 或数据集"
+          style="width: 300px"
+          clearable
+        />
+      </div>
+
       <el-table
-        :data="runs"
+        :data="pagedRuns"
         @selection-change="handleSelectionChange"
         v-loading="runsLoading"
         style="width: 100%"
         max-height="360px"
       >
         <el-table-column type="selection" width="55" />
-        <el-table-column prop="id" label="Run ID" width="220" />
-        <el-table-column prop="dataset_name" label="数据集" />
-        <el-table-column prop="status" label="状态">
+        <el-table-column prop="id" label="Run ID" width="220" sortable />
+        <el-table-column prop="dataset_name" label="数据集" sortable />
+        <el-table-column prop="status" label="状态" sortable>
           <template #default="{ row }">
             <el-tag :type="statusType(row.status)">{{ row.status }}</el-tag>
           </template>
@@ -42,6 +51,15 @@
           <el-empty description="暂无已完成的训练任务，请先去训练任务页完成训练" />
         </template>
       </el-table>
+
+      <el-pagination
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :page-sizes="[10, 20, 50]"
+        :total="filteredRuns.length"
+        layout="total, sizes, prev, pager, next"
+        style="margin-top: 16px; justify-content: flex-end"
+      />
     </el-card>
 
     <el-card v-if="comparison" class="result-card">
@@ -51,8 +69,15 @@
 
       <el-alert
         v-if="comparison.best_run_id"
-        :title="`最佳 Run: ${comparison.best_run_id}`"
+        :title="`最佳 Run: ${comparison.best_run_id}${comparison.metric_name ? '（按 ' + comparison.metric_name + '）' : ''}`"
         type="success"
+        :closable="false"
+        style="margin-bottom: 16px;"
+      />
+      <el-alert
+        v-else
+        title="无法判定最佳 Run：缺少可比较的指标或模型评分"
+        type="warning"
         :closable="false"
         style="margin-bottom: 16px;"
       />
@@ -61,10 +86,14 @@
       <el-table :data="comparison.runs" style="width: 100%" border>
         <el-table-column prop="run_id" label="Run ID" width="220" />
         <el-table-column prop="dataset_name" label="数据集" />
-        <el-table-column prop="best_model" label="最佳模型" />
-        <el-table-column prop="best_model_score" label="模型评分">
+        <el-table-column prop="best_model" label="最佳模型" min-width="160" show-overflow-tooltip>
           <template #default="{ row }">
-            {{ row.best_model_score?.toFixed(4) ?? '-' }}
+            {{ row.best_model || '无模型数据' }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="best_model_score" label="模型评分" min-width="120">
+          <template #default="{ row }">
+            {{ row.best_model_score !== null && row.best_model_score !== undefined ? row.best_model_score.toFixed(4) : '-' }}
           </template>
         </el-table-column>
         <el-table-column prop="feature_count" label="特征数" />
@@ -77,6 +106,7 @@
 
       <h3>主指标可视化</h3>
       <EChart v-if="chartOption" :option="chartOption" height="360px" />
+      <el-empty v-else-if="comparison" description="缺少共同主指标，无法绘制对比图表" />
     </el-card>
   </div>
 </template>
@@ -94,11 +124,25 @@ const runsLoading = ref(false)
 const selectedRuns = ref([])
 const loading = ref(false)
 const comparison = ref(null)
+const searchQuery = ref('')
+const currentPage = ref(1)
+const pageSize = ref(10)
 
 const statusType = (status) => {
   const map = { pending: 'info', running: 'warning', completed: 'success', failed: 'danger' }
   return map[status] || 'info'
 }
+
+const filteredRuns = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q) return runs.value
+  return runs.value.filter((r) => r.id.toLowerCase().includes(q) || r.dataset_name.toLowerCase().includes(q))
+})
+
+const pagedRuns = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return filteredRuns.value.slice(start, start + pageSize.value)
+})
 
 const metricKeys = computed(() => {
   if (!comparison.value?.runs.length) return []
@@ -110,8 +154,12 @@ const metricKeys = computed(() => {
 })
 
 const chartOption = computed(() => {
-  if (!comparison.value?.runs.length || !comparison.value.metric_name) return null
+  if (!comparison.value?.runs.length) return null
   const metric = comparison.value.metric_name
+  if (!metric) {
+    // 无共同指标时给出占位提示
+    return null
+  }
   const data = comparison.value.runs.map((row) => ({
     name: row.run_id.slice(0, 8),
     value: row.metrics[metric] ?? 0,
@@ -178,6 +226,13 @@ onMounted(fetchRuns)
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.table-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
 }
 
 .result-card {

@@ -15,24 +15,48 @@
         </div>
       </template>
 
-      <el-table :data="datasets" v-loading="loading" style="width: 100%">
-        <el-table-column prop="name" label="名称" />
-        <el-table-column prop="row_count" label="行数" />
-        <el-table-column prop="column_count" label="列数" />
-        <el-table-column prop="file_size_bytes" label="大小">
+      <div class="table-toolbar">
+        <el-input
+          v-model="searchQuery"
+          placeholder="搜索数据集名称"
+          style="width: 260px"
+          clearable
+        />
+        <el-button
+          type="danger"
+          :disabled="selectedDatasets.length === 0"
+          @click="batchDeleteDatasets"
+        >
+          批量删除 ({{ selectedDatasets.length }})
+        </el-button>
+      </div>
+
+      <el-table
+        :data="pagedDatasets"
+        v-loading="loading"
+        style="width: 100%"
+        @selection-change="handleSelectionChange"
+      >
+        <el-table-column type="selection" width="55" />
+        <el-table-column prop="name" label="名称" sortable />
+        <el-table-column prop="row_count" label="行数" sortable />
+        <el-table-column prop="column_count" label="列数" sortable />
+        <el-table-column prop="file_size_bytes" label="大小" sortable>
           <template #default="{ row }">
             {{ formatSize(row.file_size_bytes) }}
           </template>
         </el-table-column>
-        <el-table-column prop="created_at" label="创建时间">
+        <el-table-column prop="created_at" label="创建时间" sortable>
           <template #default="{ row }">
             {{ formatDate(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="280">
+        <el-table-column label="操作" width="320">
           <template #default="{ row }">
             <el-button size="small" @click="previewDataset(row)">预览</el-button>
-            <el-button size="small" type="info" @click="showQuality(row)">质量</el-button>
+            <el-tooltip content="数据质量检测报告">
+              <el-button size="small" type="info" @click="showQuality(row)">质量报告</el-button>
+            </el-tooltip>
             <el-button size="small" type="primary" @click="startTraining(row)">训练</el-button>
             <el-button size="small" type="danger" @click="deleteDataset(row)">删除</el-button>
           </template>
@@ -41,6 +65,15 @@
           <el-empty description="暂无数据集，请先上传" />
         </template>
       </el-table>
+
+      <el-pagination
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :page-sizes="[10, 20, 50]"
+        :total="filteredDatasets.length"
+        layout="total, sizes, prev, pager, next"
+        style="margin-top: 16px; justify-content: flex-end"
+      />
     </el-card>
 
     <!-- 上传对话框 -->
@@ -195,6 +228,21 @@ const trainingDefault = ref(false)
 const selectedFile = ref(null)
 const currentDataset = ref(null)
 const previewData = ref({ columns: [], rows: [] })
+const searchQuery = ref('')
+const currentPage = ref(1)
+const pageSize = ref(10)
+const selectedDatasets = ref([])
+
+const filteredDatasets = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q) return datasets.value
+  return datasets.value.filter((d) => d.name.toLowerCase().includes(q))
+})
+
+const pagedDatasets = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return filteredDatasets.value.slice(start, start + pageSize.value)
+})
 
 const previewRows = computed(() => {
   return previewData.value.rows.map((row) => {
@@ -368,15 +416,35 @@ const submitTrain = async (payload) => {
   }
 }
 
+const handleSelectionChange = (rows) => {
+  selectedDatasets.value = rows
+}
+
 const deleteDataset = async (row) => {
   try {
-    await ElMessageBox.confirm('确定删除该数据集吗？', '提示', { type: 'warning' })
+    await ElMessageBox.confirm('确定删除该数据集吗？', '提示', { type: 'warning', confirmButtonText: '确定', cancelButtonText: '取消' })
     await datasetApi.delete(row.id)
     ElMessage.success('删除成功')
     await fetchDatasets()
   } catch (error) {
     if (error !== 'cancel') {
       ElMessage.error('删除失败: ' + error.message)
+    }
+  }
+}
+
+const batchDeleteDatasets = async () => {
+  const ids = selectedDatasets.value.map((d) => d.id)
+  if (!ids.length) return
+  try {
+    await ElMessageBox.confirm(`确定删除选中的 ${ids.length} 个数据集吗？`, '提示', { type: 'warning', confirmButtonText: '确定', cancelButtonText: '取消' })
+    await Promise.all(ids.map((id) => datasetApi.delete(id)))
+    ElMessage.success('批量删除成功')
+    selectedDatasets.value = []
+    await fetchDatasets()
+  } catch (error) {
+    if (error !== 'cancel') {
+      ElMessage.error('批量删除失败: ' + error.message)
     }
   }
 }
@@ -430,6 +498,13 @@ onMounted(fetchDatasets)
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.table-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
 }
 
 .quality-title {
