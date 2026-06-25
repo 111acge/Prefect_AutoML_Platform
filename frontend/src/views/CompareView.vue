@@ -38,6 +38,9 @@
             <el-button size="small" @click="viewDetail(row)">详情</el-button>
           </template>
         </el-table-column>
+        <template #empty>
+          <el-empty description="暂无已完成的训练任务，请先去训练任务页完成训练" />
+        </template>
       </el-table>
     </el-card>
 

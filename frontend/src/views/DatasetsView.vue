@@ -401,6 +401,7 @@ const trainDefaultDataset = async () => {
     }
 
     trainingDefault.value = true
+    ElMessage.info('正在使用默认数据集启动训练，请稍候...')
     const runRes = await runApi.create({
       dataset_id: defaultDataset.id,
       target_column: 'target',
