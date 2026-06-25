@@ -60,6 +60,7 @@ async def create_experiment(
             "max_iterations": request.max_iterations,
             "trials_per_iteration": request.trials_per_iteration,
             "time_budget_minutes": request.time_budget_minutes,
+            "rare_class_strategy": request.rare_class_strategy,
         },
         status="running",
     )
@@ -78,6 +79,7 @@ async def create_experiment(
             max_iterations=request.max_iterations,
             trials_per_iteration=request.trials_per_iteration,
             time_budget_minutes=request.time_budget_minutes,
+            rare_class_strategy=request.rare_class_strategy,
             experiment_id=experiment.id,
         )
     )

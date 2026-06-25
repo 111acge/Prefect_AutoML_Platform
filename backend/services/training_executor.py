@@ -42,6 +42,7 @@ class TrainingJob:
     cleaning_rules: Dict[str, Any] | None = None
     feature_engineering_enabled: bool = True
     candidate_config: Dict[str, Any] | None = None
+    rare_class_strategy: str = "auto"
     # None 表示端到端执行；否则为单步名称
     step: str | None = None
     process: asyncio.subprocess.Process | None = None
@@ -147,6 +148,7 @@ class TrainingExecutor:
             cleaning_rules=kwargs.get("cleaning_rules"),
             feature_engineering_enabled=kwargs.get("feature_engineering_enabled", True),
             candidate_config=kwargs.get("candidate_config"),
+            rare_class_strategy=kwargs.get("rare_class_strategy", "auto"),
             step=kwargs.get("step"),
         )
         self._jobs[run_id] = job
@@ -172,6 +174,7 @@ class TrainingExecutor:
             cleaning_rules=kwargs.get("cleaning_rules"),
             feature_engineering_enabled=kwargs.get("feature_engineering_enabled", True),
             candidate_config=kwargs.get("candidate_config"),
+            rare_class_strategy=kwargs.get("rare_class_strategy", "auto"),
             step=kwargs.get("step"),
         )
         self._jobs[run_id] = job

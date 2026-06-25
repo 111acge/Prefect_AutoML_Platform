@@ -104,6 +104,7 @@ def split_data_task(
     val_size: float = 0.15,
     test_size: float = 0.15,
     random_state: int = 42,
+    rare_class_strategy: str = "auto",
 ) -> Dict[str, pd.DataFrame]:
     """严格划分训练集、验证集、测试集。
 
@@ -116,6 +117,7 @@ def split_data_task(
         val_size=val_size,
         test_size=test_size,
         random_state=random_state,
+        rare_class_strategy=rare_class_strategy,
     )
     train_df, val_df, test_df = result["train"], result["val"], result["test"]
     logger.info(
@@ -849,6 +851,7 @@ def automl_pipeline(
     cleaning_rules: Optional[Dict[str, Any]] = None,
     feature_engineering_enabled: bool = True,
     candidate_config: Optional[Dict[str, Any]] = None,
+    rare_class_strategy: str = "auto",
 ) -> Dict[str, Any]:
     """
     端到端 AutoML Pipeline。
@@ -920,7 +923,9 @@ def automl_pipeline(
         }
 
     # 5. 划分训练集/验证集/测试集（必须在预处理前，防止数据泄露）
-    split_result = split_data_task(df, target_column, task_type=task_type)
+    split_result = split_data_task(
+        df, target_column, task_type=task_type, rare_class_strategy=rare_class_strategy
+    )
     train_df_raw = split_result["train"]
     val_df_raw = split_result["val"]
     test_df_raw = split_result["test"]

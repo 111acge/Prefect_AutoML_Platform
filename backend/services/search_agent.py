@@ -103,6 +103,7 @@ async def _submit_candidate_via_api(
     target_column: str,
     task_type: str,
     candidate: CandidateConfig,
+    rare_class_strategy: Optional[str] = "auto",
 ) -> tuple[str, str, str]:
     """通过内部 API 提交候选，返回 (run_id, output_dir, status)。"""
     client = _get_internal_client()
@@ -118,6 +119,7 @@ async def _submit_candidate_via_api(
         "feature_engineering_enabled": candidate.feature_engineering_enabled,
         "experiment_id": experiment_id,
         "candidate_config": candidate.model_dump(),
+        "rare_class_strategy": candidate.rare_class_strategy or rare_class_strategy,
     }
     async with client:
         response = await client.post("/api/runs", json=payload)
@@ -245,6 +247,7 @@ async def run_experiment(
     max_iterations: int = 5,
     trials_per_iteration: int = 2,
     time_budget_minutes: Optional[float] = None,
+    rare_class_strategy: Optional[str] = "auto",
     provider: str = "auto",
     experiment_id: Optional[str] = None,
 ) -> Experiment:
@@ -276,6 +279,7 @@ async def run_experiment(
                     "max_iterations": max_iterations,
                     "trials_per_iteration": trials_per_iteration,
                     "time_budget_minutes": time_budget_minutes,
+                    "rare_class_strategy": rare_class_strategy,
                 },
             )
             db.add(experiment)
@@ -323,7 +327,12 @@ async def run_experiment(
         # 并发提交候选
         tasks = [
             _submit_candidate_via_api(
-                experiment.id, dataset_id, target_column, task_type, candidate
+                experiment.id,
+                dataset_id,
+                target_column,
+                task_type,
+                candidate,
+                rare_class_strategy=rare_class_strategy,
             )
             for candidate in candidates
         ]

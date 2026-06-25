@@ -100,6 +100,7 @@ def test_run_experiment_search_loop(tmp_path, monkeypatch):
             target_column: str,
             task_type: str,
             candidate: CandidateConfig,
+            **kwargs,
         ):
             output_dir = tmp_path / "run_output"
             output_dir.mkdir(exist_ok=True)
@@ -169,6 +170,7 @@ def test_run_experiment_infers_regression_metric(tmp_path, monkeypatch):
             target_column: str,
             task_type: str,
             candidate: CandidateConfig,
+            **kwargs,
         ):
             output_dir = tmp_path / "run_reg"
             output_dir.mkdir(exist_ok=True)

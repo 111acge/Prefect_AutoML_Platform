@@ -174,6 +174,7 @@ async def create_run(
                 "feature_engineering_enabled": request.feature_engineering_enabled,
                 "experiment_id": request.experiment_id,
                 "candidate_config": request.candidate_config.model_dump() if request.candidate_config else None,
+                "rare_class_strategy": request.rare_class_strategy,
             },
         )
         db.add(run)
@@ -197,6 +198,7 @@ async def create_run(
             feature_engineering_enabled=request.feature_engineering_enabled,
             experiment_id=request.experiment_id,
             candidate_config=request.candidate_config,
+            rare_class_strategy=request.rare_class_strategy,
         )
         snapshot = _build_config_snapshot(dataset, snapshot_request)
         snapshot_path = output_dir / "config_snapshot.json"
@@ -221,6 +223,7 @@ async def create_run(
             "task_type": task_type,
             "seed": request.seed,
             "file_path": dataset.file_path,
+            "rare_class_strategy": request.rare_class_strategy,
         }
 
         if request.mode == "step":
@@ -247,6 +250,7 @@ async def create_run(
             candidate_config=(
                 request.candidate_config.model_dump() if request.candidate_config else None
             ),
+            rare_class_strategy=request.rare_class_strategy,
             step="all",
         )
 
@@ -291,6 +295,7 @@ def _build_config_snapshot(dataset: Dataset, request: RunCreate) -> Dict[str, An
         "seed": request.seed,
         "time_budget_minutes": request.time_budget_minutes,
         "dataset_file_path": dataset.file_path,
+        "rare_class_strategy": request.rare_class_strategy,
     }
 
 
@@ -522,6 +527,7 @@ async def execute_run_step(
         cleaning_rules=cleaning_rules,
         feature_engineering_enabled=snapshot.get("feature_engineering_enabled", True),
         candidate_config=config.get("candidate_config"),
+        rare_class_strategy=snapshot.get("rare_class_strategy", "auto"),
         step=step_name,
     )
 

@@ -369,6 +369,7 @@ class StepRunner:
             val_size=val_size,
             test_size=test_size,
             random_state=seed,
+            rare_class_strategy=ctx.get("rare_class_strategy", "auto"),
         )
         train_df, val_df, test_df = result["train"], result["val"], result["test"]
 
@@ -728,6 +729,7 @@ class StepRunner:
                 "task_type": ctx.get("task_type"),
                 "seed": ctx.get("seed"),
                 "file_path": ctx.get("dataset_file_path"),
+                "rare_class_strategy": ctx.get("rare_class_strategy", "auto"),
             }
         else:
             ctx = self._run_context()

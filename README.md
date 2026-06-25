@@ -113,7 +113,6 @@ uv pip install -r requirements-core.txt
 uv pip install -r requirements-full.txt
 ```
 
-> 注意：当前 `requirements.txt` 文件存在内容异常，请暂时使用 `requirements-core.txt` 或 `requirements-full.txt`。我们会在近期修复。
 
 ### 开发启动
 

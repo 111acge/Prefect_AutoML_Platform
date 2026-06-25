@@ -108,6 +108,10 @@ class CandidateConfig(BaseModel):
     cleaning_rules: Optional[CleaningRules] = None
     hyperparameters: Optional[Dict[str, Any]] = None
     validation_strategy: Optional[Dict[str, Any]] = None
+    rare_class_strategy: Optional[str] = Field(
+        default=None,
+        pattern="^(auto|drop|none)$",
+    )
     reasoning: Optional[str] = None
 
 
@@ -133,6 +137,10 @@ class RunCreate(BaseModel):
     feature_engineering_enabled: bool = Field(default=True)
     experiment_id: Optional[str] = None
     candidate_config: Optional[CandidateConfig] = None
+    rare_class_strategy: Optional[str] = Field(
+        default="auto",
+        pattern="^(auto|drop|none)$",
+    )
     mode: str = Field(default="auto", pattern="^(auto|step)$")
 
 
@@ -149,6 +157,10 @@ class ExperimentCreate(BaseModel):
     max_iterations: int = Field(default=5, ge=1, le=20)
     trials_per_iteration: int = Field(default=2, ge=1, le=5)
     time_budget_minutes: Optional[float] = Field(default=10, ge=0.1)
+    rare_class_strategy: Optional[str] = Field(
+        default="auto",
+        pattern="^(auto|drop|none)$",
+    )
 
 
 class ExperimentResponse(BaseModel):
