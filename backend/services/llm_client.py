@@ -16,6 +16,13 @@ import re
 from typing import Any, Dict, List, Optional
 
 from config import settings
+from services.llm_settings_service import (
+    get_active_api_key as _get_dynamic_api_key,
+    get_active_model as _get_dynamic_model,
+    get_active_provider as _get_dynamic_provider,
+    get_provider_config as _get_provider_config,
+    SUPPORTED_PROVIDERS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,13 +44,18 @@ PROVIDER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "deepseek": {
         "base_url": "https://api.deepseek.com/v1",
-        "default_model": "deepseek-chat",
+        "default_model": "deepseek-v4-flash",
         "env_key": "DEEPSEEK_API_KEY",
     },
     "minimax": {
         "base_url": "https://api.minimax.io/v1",
         "default_model": "MiniMax-M3",
         "env_key": "MINIMAX_API_KEY",
+    },
+    "glm": {
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "default_model": "glm-4-flash",
+        "env_key": "GLM_API_KEY",
     },
     "openai": {
         "base_url": None,
@@ -54,7 +66,13 @@ PROVIDER_CONFIG: Dict[str, Dict[str, Any]] = {
 
 
 def _get_api_key(provider: str) -> Optional[str]:
-    """读取对应提供商的 API 密钥（优先环境变量，其次 pydantic settings）。"""
+    """读取对应提供商的 API 密钥（优先动态配置，其次环境变量/pydantic settings）。"""
+    # 如果当前激活的 provider 与请求一致，优先使用用户在前端配置的动态 key
+    if _get_dynamic_provider() == provider:
+        dynamic_key = _get_dynamic_api_key()
+        if dynamic_key:
+            return dynamic_key
+
     cfg = PROVIDER_CONFIG.get(provider, {})
     env_key = cfg.get("env_key")
     if env_key:
@@ -77,7 +95,7 @@ def resolve_providers(provider: str = "auto") -> List[str]:
         else:
             logger.warning("LLM 提供商 %s 未配置 API 密钥", prov)
 
-    order = ["kimi", "deepseek", "minimax", "openai"]
+    order = ["kimi", "deepseek", "minimax", "glm", "openai"]
     return [p for p in order if _get_api_key(p)]
 
 
@@ -102,9 +120,9 @@ async def call_provider(
     provider: str,
     messages: List[Dict[str, str]],
     *,
-    max_tokens: int = 4096,
+    max_tokens: Optional[int] = 4096,
     temperature: float = 0.0,
-    timeout: float = 60.0,
+    timeout: Optional[float] = 60.0,
 ) -> str:
     """调用指定 OpenAI 兼容端点并返回原始文本。"""
     if not _OPENAI_AVAILABLE:
@@ -120,17 +138,26 @@ async def call_provider(
         client_kwargs["base_url"] = cfg["base_url"]
 
     client = AsyncOpenAI(**client_kwargs)
-    model = getattr(settings, "default_llm_model", None) or cfg["default_model"]
+    # 优先使用用户配置的模型；其次使用环境变量覆盖；最后使用默认模型
+    model = _get_dynamic_model() if _get_dynamic_provider() == provider else None
+    if not model:
+        model = getattr(settings, "default_llm_model", None) or cfg["default_model"]
 
-    response = await asyncio.wait_for(
-        client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        ),
-        timeout=timeout,
-    )
+    create_kwargs: Dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+    }
+    if max_tokens is not None:
+        create_kwargs["max_tokens"] = max_tokens
+
+    if timeout is None:
+        response = await client.chat.completions.create(**create_kwargs)
+    else:
+        response = await asyncio.wait_for(
+            client.chat.completions.create(**create_kwargs),
+            timeout=timeout,
+        )
     return response.choices[0].message.content or ""
 
 

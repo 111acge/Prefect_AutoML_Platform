@@ -20,9 +20,20 @@
         </el-menu-item>
         <el-menu-item index="/compare">模型对比</el-menu-item>
       </el-menu>
+      <div class="header-actions">
+        <el-button
+          :icon="Key"
+          type="primary"
+          text
+          @click="llmDialogVisible = true"
+        >
+          LLM 配置
+        </el-button>
+      </div>
     </el-header>
     <el-main>
       <router-view />
+      <LLMSettingsDialog v-model:visible="llmDialogVisible" />
     </el-main>
     <el-footer class="app-footer">
       <div class="footer-content">
@@ -41,12 +52,14 @@
 <script setup>
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { DataLine } from '@element-plus/icons-vue'
+import { DataLine, Key } from '@element-plus/icons-vue'
 import { runApi } from '@/api'
+import LLMSettingsDialog from '@/components/LLMSettingsDialog.vue'
 
 const route = useRoute()
 const activeIndex = computed(() => route.path)
 const runningCount = ref(0)
+const llmDialogVisible = ref(false)
 let timer = null
 
 const checkRunning = async () => {
@@ -94,6 +107,12 @@ onUnmounted(() => {
   border-bottom: none;
   flex-shrink: 0;
   white-space: nowrap;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .app-footer {

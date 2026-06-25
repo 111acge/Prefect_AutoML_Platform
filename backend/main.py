@@ -11,7 +11,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
-from routers import datasets, runs, intent, experiments
+from routers import datasets, runs, intent, experiments, llm_settings
+from services.llm_settings_service import init_llm_config
 from services.seed_data import ensure_default_dataset
 from services.training_executor import training_executor
 
@@ -27,6 +28,8 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理。"""
     # 启动时初始化数据库
     await init_db()
+    # 加载 LLM 用户配置
+    await init_llm_config()
     # 加载默认数据集
     await ensure_default_dataset()
     yield
@@ -55,6 +58,7 @@ app.include_router(datasets.router, prefix="/api/datasets")
 app.include_router(runs.router, prefix="/api/runs")
 app.include_router(intent.router, prefix="/api/intent")
 app.include_router(experiments.router, prefix="/api/experiments")
+app.include_router(llm_settings.router, prefix="/api/settings")
 
 
 @app.get("/health")

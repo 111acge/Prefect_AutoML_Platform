@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.join(project_root, "backend"))
 # 必须在导入 prefect 前设置
 os.environ.setdefault("PREFECT_API_URL", "")
 
+from services.llm_settings_service import load_llm_config  # noqa: E402
 from services.step_runner import StepRunner, STEP_ORDER  # noqa: E402
 
 
@@ -48,6 +49,12 @@ async def main_async():
         help=f"步骤名称之一: {', '.join(STEP_ORDER)} 或 'all'（顺序执行全部）",
     )
     args = parser.parse_args()
+
+    # 加载用户配置的 LLM 设置（子进程不共享父进程的内存缓存）
+    try:
+        await load_llm_config()
+    except Exception:
+        pass
 
     runner = StepRunner(run_id=args.run_id, output_dir=args.output_dir)
 

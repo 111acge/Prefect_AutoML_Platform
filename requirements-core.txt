@@ -35,6 +35,9 @@ jinja2>=3.1.0
 matplotlib>=3.7.0
 seaborn>=0.12.0
 
+# LLM Client (OpenAI-compatible endpoints: KIMI / DeepSeek / MiniMax / GLM / OpenAI)
+openai>=1.0.0
+
 # Utilities
 python-dotenv>=1.0.0
 tqdm>=4.65.0

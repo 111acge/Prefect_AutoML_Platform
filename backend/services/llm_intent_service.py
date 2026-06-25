@@ -20,6 +20,15 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
+# 动态用户配置（支持前端配置 LLM provider/key/model）
+from services.llm_settings_service import (
+    get_active_api_key as _get_dynamic_api_key,
+    get_active_model as _get_dynamic_model,
+    get_active_provider as _get_dynamic_provider,
+    get_provider_config as _get_dynamic_provider_config,
+    SUPPORTED_PROVIDERS as _DYNAMIC_SUPPORTED_PROVIDERS,
+)
+
 # 可选依赖：openai SDK
 try:
     from openai import AsyncOpenAI, APIError
@@ -43,7 +52,7 @@ _PROVIDER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "deepseek": {
         "base_url": "https://api.deepseek.com/v1",
-        "default_model": "deepseek-chat",
+        "default_model": "deepseek-v4-flash",
         "env_key": "DEEPSEEK_API_KEY",
     },
     "minimax": {
@@ -56,7 +65,22 @@ _PROVIDER_CONFIG: Dict[str, Dict[str, Any]] = {
         "default_model": "gpt-4o-mini",
         "env_key": "OPENAI_API_KEY",
     },
+    "glm": {
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "default_model": "glm-4-flash",
+        "env_key": "GLM_API_KEY",
+    },
 }
+
+
+def _provider_config(provider: str) -> Dict[str, Any]:
+    """返回合并后的提供商配置（动态配置覆盖静态默认值）。"""
+    cfg = dict(_PROVIDER_CONFIG.get(provider, {}))
+    dynamic = _get_dynamic_provider_config(provider) or {}
+    for key in ("base_url", "default_model"):
+        if dynamic.get(key):
+            cfg[key] = dynamic[key]
+    return cfg
 
 _TASK_TYPES = ("binary_classification", "multiclass_classification", "regression")
 _METRICS = (
@@ -271,23 +295,35 @@ async def infer_schema_with_llm(
 
 
 def _resolve_providers(provider: str) -> List[str]:
-    """根据 provider 参数与可用环境变量确定实际尝试的提供商列表。"""
+    """根据 provider 参数与可用配置确定实际尝试的提供商列表。"""
+    # 如果用户通过前端指定了 provider，优先只使用它
+    dynamic_provider = _get_dynamic_provider()
+
     if provider and provider.lower() != "auto":
         prov = provider.lower()
-        if prov not in _PROVIDER_CONFIG:
+        if prov not in _PROVIDER_CONFIG and prov not in _DYNAMIC_SUPPORTED_PROVIDERS:
             logger.warning("未知 LLM 提供商: %s，将尝试 auto", prov)
         elif _get_api_key(prov):
             return [prov]
         else:
             logger.warning("LLM 提供商 %s 未配置 API 密钥", prov)
 
-    # auto 优先级：KIMI -> DeepSeek -> MiniMax -> OpenAI
-    order = ["kimi", "deepseek", "minimax", "openai"]
+    # 动态 provider 优先级最高
+    if dynamic_provider and _get_api_key(dynamic_provider):
+        return [dynamic_provider]
+
+    # auto 优先级：KIMI -> DeepSeek -> MiniMax -> GLM -> OpenAI
+    order = ["kimi", "deepseek", "minimax", "glm", "openai"]
     return [p for p in order if _get_api_key(p)]
 
 
 def _get_api_key(provider: str) -> Optional[str]:
-    """读取对应提供商的 API 密钥（优先环境变量，其次 pydantic settings）。"""
+    """读取对应提供商的 API 密钥（优先动态配置，其次环境变量/pydantic settings）。"""
+    if _get_dynamic_provider() == provider:
+        dynamic_key = _get_dynamic_api_key()
+        if dynamic_key:
+            return dynamic_key
+
     cfg = _PROVIDER_CONFIG.get(provider, {})
     env_key = cfg.get("env_key")
     if env_key:
@@ -302,7 +338,10 @@ def _get_api_key(provider: str) -> Optional[str]:
 
 async def _call_provider(provider: str, messages: List[Dict[str, str]]) -> str:
     """调用指定 OpenAI 兼容端点。"""
-    cfg = _PROVIDER_CONFIG[provider]
+    if not _OPENAI_AVAILABLE or AsyncOpenAI is None:
+        raise RuntimeError("openai 库未安装，无法调用 LLM")
+
+    cfg = _provider_config(provider)
     api_key = _get_api_key(provider)
     if not api_key:
         raise RuntimeError(f"未配置 {provider} API 密钥")
@@ -312,7 +351,14 @@ async def _call_provider(provider: str, messages: List[Dict[str, str]]) -> str:
         client_kwargs["base_url"] = cfg["base_url"]
 
     client = AsyncOpenAI(**client_kwargs)
-    model = getattr(settings, "default_llm_model", None) or cfg["default_model"]
+    # 动态模型覆盖：若当前激活 provider 匹配，优先使用用户指定的 model
+    model = cfg.get("default_model")
+    if _get_dynamic_provider() == provider:
+        dynamic_model = _get_dynamic_model()
+        if dynamic_model:
+            model = dynamic_model
+    if not model:
+        model = getattr(settings, "default_llm_model", None) or cfg["default_model"]
 
     response = await client.chat.completions.create(
         model=model,

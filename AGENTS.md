@@ -48,6 +48,7 @@
 > **依赖文件注意**：
 > - `pyproject.toml` 的 `dependencies` 中已包含 `torch>=2.0.0`，并配置了 `pytorch-cpu` 索引。
 > - `requirements-core.txt` 与 `requirements.txt` 当前**未列出 torch**，与 `pyproject.toml` 存在差异；若通过 `uv pip install -r requirements-core.txt` 安装， NeuralNetTorch 可能不可用。
+> - `requirements-core.txt` 与 `requirements.txt` 已包含 `openai`，用于 LLM 配置功能。
 > - `requirements-full.txt` 使用完整版 `autogluon>=1.1.0`，并包含 feature-engine、imbalanced-learn、shap、openai。
 
 ### 2.2 Node 前端
@@ -87,7 +88,8 @@ prefect-project/
 │   │   ├── datasets.py         # 数据集接口
 │   │   ├── runs.py             # 训练任务、预测、解释、报告、SSE、对比、原子步骤接口
 │   │   ├── intent.py           # 自然语言意图接口
-│   │   └── experiments.py      # LLM 驱动的多候选搜索实验接口
+│   │   ├── experiments.py      # LLM 驱动的多候选搜索实验接口
+│   │   └── llm_settings.py     # LLM provider/key/model 配置接口
 │   ├── services/               # 业务服务层
 │   │   ├── automl.py           # AutoGluon 封装（训练、集成回退、指标映射）
 │   │   ├── training_strategy.py# 数据驱动的训练策略路由
@@ -108,6 +110,7 @@ prefect-project/
 │   │   ├── llm_intent_service.py     # LLM 意图解析（带降级）
 │   │   ├── llm_strategy_service.py   # LLM 策略/候选推荐
 │   │   ├── report_llm_service.py     # LLM 业务解读
+│   │   ├── llm_settings_service.py   # LLM provider/key/model 运行时配置管理
 │   │   ├── search_agent.py           # LLM 驱动的多候选搜索 Agent（Experiment）
 │   │   ├── db_connection_service.py  # 数据库连接
 │   │   ├── storage.py                # 文件存储
@@ -167,7 +170,7 @@ uv venv --python 3.12
 source .venv/bin/activate
 # Windows: .venv\Scripts\activate
 
-# 核心依赖（CPU 版 AutoGluon，安装更快；注意不含 torch）
+# 核心依赖（CPU 版 AutoGluon，安装更快；注意不含 torch，已含 openai）
 uv pip install -r requirements-core.txt
 
 # 完整依赖（含 torch / fastai / NN / LLM API）
@@ -389,9 +392,10 @@ mypy backend
 - 默认读取项目根目录 `.env` 文件。
 - 关键配置项：
   - `DATABASE_URL`：默认 SQLite。
-  - `LLM_PROVIDER`：`auto` / `kimi` / `deepseek` / `minimax` / `openai`。
-  - `KIMI_API_KEY` / `DEEPSEEK_API_KEY` / `MINIMAX_API_KEY` / `OPENAI_API_KEY`。
+  - `LLM_PROVIDER`：`auto` / `kimi` / `deepseek` / `minimax` / `glm` / `openai`。
+  - `KIMI_API_KEY` / `DEEPSEEK_API_KEY` / `MINIMAX_API_KEY` / `GLM_API_KEY` / `OPENAI_API_KEY`。
   - `DEFAULT_LLM_MODEL`：覆盖默认模型。
+  - **动态配置**：运行时可通过 `POST /api/settings/llm` 持久化 provider / API Key / model 到数据库，所有 LLM 调用优先读取动态配置，未配置时自动降级到规则引擎/模板。
   - 性能/稳定性优化开关（默认自动，根据 `n_classes` / `n_samples` 决策；`.env` 显式设置可覆盖）：
     - `TRAIN_EVAL_ENABLED` / `TRAIN_EVAL_SAMPLE_SIZE`：训练集参考评估（`n_classes > 50` 或 `n_samples > 100_000` 时自动采样 200 行）。
     - `SHAP_ENABLED` / `SHAP_MAX_SAMPLE_SIZE`：SHAP 可解释性（`n_classes > 50` 时采样 50 行；`n_classes > 200` 时自动跳过）。
@@ -447,7 +451,16 @@ GET    /api/runs/{id}/logs
 POST   /api/runs/{id}/predict
 POST   /api/runs/{id}/predict/batch
 POST   /api/runs/{id}/explain
+POST   /api/runs/{id}/interpretation/regenerate  # 重新生成 LLM 业务解读
 DELETE /api/runs/{id}
+```
+
+### 配置
+
+```text
+GET    /api/settings/llm              # 获取当前 LLM 配置（API Key 已掩码）
+POST   /api/settings/llm              # 保存 LLM provider / API Key / model
+GET    /api/settings/llm/providers    # 列出支持的 LLM 提供商及默认配置
 ```
 
 ### 实验
@@ -485,7 +498,7 @@ POST   /api/intent/schema
 - **CORS**：`backend/main.py` 当前配置为 `allow_origins=["*"]`，生产环境应收紧为具体域名。
 - **文件上传**：默认限制 `max_upload_size_mb=100`，上传目录为 `data/uploads/`。
 - **数据库连接**：`db_connection_service.py` 直接使用用户传入的连接参数创建引擎，不要在公网暴露此接口。
-- **LLM API 密钥**：通过 `.env` 配置，未配置时自动降级，不会阻塞主流程。
+- **LLM API 密钥**：可通过 `.env` 或运行时 `POST /api/settings/llm` 配置，持久化到数据库；未配置时自动降级，不会阻塞主流程。
 - **SQL 注入**：数据库连接查询使用 SQLAlchemy 文本参数化，不要拼接用户输入 SQL。
 - **路径遍历**：文件存储服务使用 `Path.resolve()` 与项目根目录校验，上传文件名应避免直接使用。
 
@@ -523,5 +536,8 @@ POST   /api/intent/schema
 | `backend/services/training_executor.py` | 异步训练执行器 |
 | `scripts/run_step.py` | 单步/全量执行入口 |
 | `backend/services/search_agent.py` | LLM 多候选搜索 Agent |
+| `backend/services/llm_settings_service.py` | LLM provider/key/model 运行时配置管理 |
+| `backend/routers/llm_settings.py` | LLM 配置 REST API |
+| `frontend/src/components/LLMSettingsDialog.vue` | LLM 配置弹窗组件 |
 | `frontend/vite.config.js` | Vite 配置与 API 代理 |
 | `.env.example` | 环境变量示例 |

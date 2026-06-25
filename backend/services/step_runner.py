@@ -617,6 +617,8 @@ class StepRunner:
                 pd.read_csv(self.manifest.feature_importance_path).head(10).to_dict(orient="records")
             )
 
+        # 训练流程默认使用规则模板生成业务解读；LLM 版本需用户在页面上主动触发，
+        # 并在触发前展示数据外传免责声明。
         interpretation = await generate_business_interpretation(
             task_type=ctx["task_type"],
             primary_metric=strategy.get("primary_metric"),
@@ -624,6 +626,7 @@ class StepRunner:
             feature_importance=feature_importance,
             quality=quality,
             strategy=strategy,
+            force_rule_based=True,
         )
         self.manifest.save_json(self.manifest.interpretation_path, interpretation)
         return {"interpretation": str(self.manifest.interpretation_path)}

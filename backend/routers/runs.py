@@ -38,7 +38,9 @@ from services.storage import storage_service
 from services.step_manifest import StepManifest
 from services.step_runner import STEP_ORDER, initialize_run_steps
 from services.training_executor import training_executor
+from services.report_llm_service import generate_business_interpretation
 from services.schema_service import build_schema_from_file, infer_schema, validate_against_schema
+from services.llm_settings_service import get_active_api_key
 
 router = APIRouter(tags=["runs"])
 
@@ -778,6 +780,50 @@ async def run_events(run_id: str, db: AsyncSession = Depends(get_db)):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
     )
+
+
+@router.post("/{run_id}/interpretation/regenerate")
+async def regenerate_interpretation(run_id: str, db: AsyncSession = Depends(get_db)):
+    """重新生成业务解读（用于用户配置 LLM Key 后刷新解读）。"""
+    result = await db.execute(select(Run).where(Run.id == run_id))
+    run = result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if run.status != "completed":
+        raise HTTPException(status_code=400, detail="任务尚未完成")
+
+    if not get_active_api_key():
+        raise HTTPException(status_code=400, detail="未配置 LLM API Key")
+
+    output_dir = Path(run.output_dir)
+    manifest = StepManifest(output_dir)
+
+    try:
+        ctx = manifest.load_run_context()
+        strategy = manifest.load_json(manifest.strategy_path, {})
+        quality = manifest.load_json(manifest.quality_report_path, {})
+        metrics = manifest.load_json(manifest.metrics_path, {})
+
+        feature_importance = []
+        if manifest.feature_importance_path.exists():
+            feature_importance = (
+                pd.read_csv(manifest.feature_importance_path).head(10).to_dict(orient="records")
+            )
+
+        interpretation = await generate_business_interpretation(
+            task_type=ctx.get("task_type", "binary_classification"),
+            primary_metric=strategy.get("primary_metric"),
+            metrics=metrics,
+            feature_importance=feature_importance,
+            quality=quality,
+            strategy=strategy,
+            raise_on_failure=True,
+        )
+        manifest.save_json(manifest.interpretation_path, interpretation)
+        return interpretation
+    except Exception as e:
+        logger.exception("重新生成业务解读失败")
+        raise HTTPException(status_code=500, detail=f"重新生成失败: {e}") from e
 
 
 @router.get("/{run_id}/results", response_model=RunResult)

@@ -11,11 +11,8 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-from services.llm_intent_service import (
-    _resolve_providers,
-    _call_provider,
-    _parse_llm_json,
-)
+from services.llm_client import call_provider, resolve_providers
+from services.llm_intent_service import _parse_llm_json
 
 logger = logging.getLogger(__name__)
 
@@ -130,14 +127,30 @@ async def generate_business_interpretation(
     strategy: Optional[Dict[str, Any]] = None,
     provider: str = "auto",
     timeout: float = 30.0,
+    force_rule_based: bool = False,
+    raise_on_failure: bool = False,
 ) -> Dict[str, Any]:
     """生成业务解读报告。
 
-    LLM 不可用或失败时，自动降级到规则模板。
+    LLM 不可用或失败时，自动降级到规则模板（除非 raise_on_failure=True）。
+
+    Args:
+        force_rule_based: 为 True 时直接返回规则模板（用于训练流程默认不自动调用 LLM，
+                         避免用户未明确同意就将数据发送到第三方 LLM）。
+        raise_on_failure: 为 True 时 LLM 调用失败抛出异常，不静默降级（用于用户主动触发的重新生成）。
     """
-    providers = _resolve_providers(provider)
+    if force_rule_based:
+        logger.info("训练流程使用规则模板生成业务解读（LLM 解读需用户主动触发）")
+        return _rule_based_interpretation(
+            task_type, primary_metric, metrics, feature_importance, quality, strategy
+        )
+
+    providers = resolve_providers(provider)
     if not providers:
-        logger.warning("未配置 LLM API 密钥，业务解读降级到规则模板")
+        msg = "未配置 LLM API 密钥"
+        logger.warning("%s，业务解读降级到规则模板", msg)
+        if raise_on_failure:
+            raise RuntimeError(msg)
         return _rule_based_interpretation(
             task_type, primary_metric, metrics, feature_importance, quality, strategy
         )
@@ -146,9 +159,16 @@ async def generate_business_interpretation(
         task_type, primary_metric, metrics, feature_importance, quality, strategy
     )
 
+    last_error: Optional[Exception] = None
     for prov in providers:
         try:
-            raw = await asyncio.wait_for(_call_provider(prov, messages), timeout=timeout)
+            raw = await call_provider(
+                prov,
+                messages,
+                max_tokens=None,
+                temperature=0.0,
+                timeout=None,
+            )
             parsed = _parse_llm_json(raw)
             parsed["provider"] = prov
             # 确保必要字段存在
@@ -158,10 +178,15 @@ async def generate_business_interpretation(
             return parsed
         except asyncio.TimeoutError:
             logger.warning("LLM 业务解读 %s 超时", prov)
+            last_error = asyncio.TimeoutError(f"{prov} timeout")
         except Exception as e:
             logger.warning("LLM 业务解读失败 (%s): %s", prov, e)
+            last_error = e
 
-    logger.warning("所有 LLM 提供商业务解读失败，降级到规则模板")
+    msg = f"所有 LLM 提供商业务解读失败; 最后错误: {last_error}"
+    logger.warning(msg)
+    if raise_on_failure:
+        raise RuntimeError(msg) from last_error
     return _rule_based_interpretation(
         task_type, primary_metric, metrics, feature_importance, quality, strategy
     )

@@ -144,7 +144,30 @@
                   type="info"
                   :closable="false"
                   style="margin-bottom: 12px;"
-                />
+                >
+                  <template #default>
+                    <div>
+                      当前为规则模板生成的兜底解读。若需 LLM 智能解读，请主动点击生成。
+                      <el-button
+                        v-if="llmConfigured"
+                        link
+                        type="primary"
+                        :loading="regeneratingInterpretation"
+                        @click="openDisclaimer"
+                      >
+                        生成 LLM 业务解读
+                      </el-button>
+                      <el-button
+                        v-else
+                        link
+                        type="primary"
+                        @click="llmDialogVisible = true"
+                      >
+                        配置 LLM API Key
+                      </el-button>
+                    </div>
+                  </template>
+                </el-alert>
                 <p class="interpretation-summary">
                   {{ results.business_interpretation.business_summary }}
                 </p>
@@ -354,6 +377,33 @@
       <el-empty :description="run.status === 'running' ? '训练进行中，结果将在完成后自动加载' : '暂无训练结果'" />
     </el-card>
   </div>
+
+  <LLMSettingsDialog v-model:visible="llmDialogVisible" @saved="onLLMSettingsSaved" />
+
+  <el-dialog
+    v-model="disclaimerVisible"
+    title="数据外传风险提示"
+    width="480px"
+    :close-on-click-modal="false"
+  >
+    <el-alert
+      type="warning"
+      :closable="false"
+      show-icon
+    >
+      <template #title>
+        <span>生成 LLM 业务解读将把训练摘要数据发送到第三方 LLM 服务</span>
+      </template>
+      <p>发送内容主要包括：任务类型、评估指标、Top 特征名称及重要性、数据质量摘要等。原始数据行不会被发送，但特征名称、指标数值等仍可能包含业务敏感信息，存在泄露风险。</p>
+    </el-alert>
+    <p style="margin-top: 16px;">请确认是否继续生成？</p>
+    <template #footer>
+      <el-button @click="disclaimerVisible = false">取消</el-button>
+      <el-button type="primary" :loading="regeneratingInterpretation" @click="confirmLLMInterpretation">
+        确认生成
+      </el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup>
@@ -361,8 +411,9 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Upload as UploadIcon, Check, Loading, CloseBold, Minus } from '@element-plus/icons-vue'
-import api, { runApi } from '@/api'
+import api, { runApi, llmSettingsApi } from '@/api'
 import EChart from '@/components/EChart.vue'
+import LLMSettingsDialog from '@/components/LLMSettingsDialog.vue'
 
 const route = useRoute()
 const runId = route.params.id
@@ -381,6 +432,10 @@ const batchResultUrl = ref(null)
 const logs = ref('')
 const logTextareaRef = ref(null)
 const steps = ref([])
+const llmConfigured = ref(false)
+const llmDialogVisible = ref(false)
+const disclaimerVisible = ref(false)
+const regeneratingInterpretation = ref(false)
 let logTimer = null
 let evtSource = null
 
@@ -620,6 +675,46 @@ const fetchResults = async () => {
   }
 }
 
+const checkLLMConfig = async () => {
+  try {
+    const res = await llmSettingsApi.get()
+    llmConfigured.value = !!(res.data?.provider && res.data?.api_key_masked)
+  } catch (error) {
+    llmConfigured.value = false
+    console.error('检查 LLM 配置失败:', error)
+  }
+}
+
+const regenerateInterpretation = async () => {
+  regeneratingInterpretation.value = true
+  try {
+    const res = await runApi.regenerateInterpretation(runId)
+    results.value = { ...results.value, business_interpretation: res.data }
+    ElMessage.success('业务解读已重新生成')
+  } catch (error) {
+    ElMessage.error('重新生成失败: ' + (error.message || '未知错误'))
+  } finally {
+    regeneratingInterpretation.value = false
+  }
+}
+
+const openDisclaimer = () => {
+  if (!llmConfigured.value) {
+    llmDialogVisible.value = true
+    return
+  }
+  disclaimerVisible.value = true
+}
+
+const confirmLLMInterpretation = async () => {
+  disclaimerVisible.value = false
+  await regenerateInterpretation()
+}
+
+const onLLMSettingsSaved = async () => {
+  await checkLLMConfig()
+}
+
 const fetchLogs = async () => {
   try {
     const res = await api.get(`/runs/${runId}/logs`)
@@ -783,6 +878,7 @@ onMounted(async () => {
   await loadData()
   await fetchSteps()
   await fetchLogs()
+  await checkLLMConfig()
   if (!isTerminal(run.value.status)) {
     connectEvents()
   }
