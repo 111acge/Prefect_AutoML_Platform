@@ -1,3 +1,7 @@
+# Copyright (C) 2026  Ethan FAN <fyz.214037@foxmail.com>
+# This file is part of Prefect AutoML Platform and is licensed under AGPL-3.0-or-later.
+# See LICENSE for details.
+
 """自动优化阈值测试。
 
 验证系统在高类别数/大数据集场景下，无需人工配置即可自动触发

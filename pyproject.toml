@@ -4,9 +4,9 @@ version = "0.1.0"
 description = "端到端全自动机器学习平台，基于 Prefect + AutoGluon"
 requires-python = ">=3.12,<3.13"
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "AGPL-3.0-or-later"}
 authors = [
-    {name = "Ethan FAN", email = "example@example.com"}
+    {name = "Ethan FAN", email = "fyz.214037@foxmail.com"}
 ]
 dependencies = [
     "fastapi>=0.111.0,<0.115.0",

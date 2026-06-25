@@ -1,3 +1,7 @@
+# Copyright (C) 2026  Ethan FAN <fyz.214037@foxmail.com>
+# This file is part of Prefect AutoML Platform and is licensed under AGPL-3.0-or-later.
+# See LICENSE for details.
+
 """数据驱动的训练策略生成服务。
 
 根据数据集的元数据（样本量、特征数、字段类型、目标分布、缺失率等）

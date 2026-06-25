@@ -1,3 +1,7 @@
+# Copyright (C) 2026  Ethan FAN <fyz.214037@foxmail.com>
+# This file is part of Prefect AutoML Platform and is licensed under AGPL-3.0-or-later.
+# See LICENSE for details.
+
 """通用 LLM 客户端。
 
 为 Agent 系统（元策略推荐器、错误诊断、特征生成等）提供统一的 LLM 调用入口：

@@ -1,3 +1,7 @@
+# Copyright (C) 2026  Ethan FAN <fyz.214037@foxmail.com>
+# This file is part of Prefect AutoML Platform and is licensed under AGPL-3.0-or-later.
+# See LICENSE for details.
+
 """训练任务执行器。
 
 将 AutoML 训练流程放到独立子进程中异步执行，避免阻塞 FastAPI 事件循环，

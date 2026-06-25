@@ -1,3 +1,7 @@
+# Copyright (C) 2026  Ethan FAN <fyz.214037@foxmail.com>
+# This file is part of Prefect AutoML Platform and is licensed under AGPL-3.0-or-later.
+# See LICENSE for details.
+
 """Schema 推断、校验与对齐服务。
 
 提供从 DataFrame 推断 Schema、校验数据是否符合 Schema、

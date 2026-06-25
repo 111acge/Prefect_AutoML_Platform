@@ -1,3 +1,7 @@
+# Copyright (C) 2026  Ethan FAN <fyz.214037@foxmail.com>
+# This file is part of Prefect AutoML Platform and is licensed under AGPL-3.0-or-later.
+# See LICENSE for details.
+
 """LLM 意图理解服务：将自然语言解析为训练配置。
 
 支持多 LLM 提供商（KIMI / DeepSeek / MiniMax 等 OpenAI 兼容端点），

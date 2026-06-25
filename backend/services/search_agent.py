@@ -1,3 +1,7 @@
+# Copyright (C) 2026  Ethan FAN <fyz.214037@foxmail.com>
+# This file is part of Prefect AutoML Platform and is licensed under AGPL-3.0-or-later.
+# See LICENSE for details.
+
 """LLM 驱动的 AutoML 搜索 Agent。
 
 在严格隔离 train/val/test 的前提下，迭代地提出候选配置、提交训练、

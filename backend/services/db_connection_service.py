@@ -1,3 +1,7 @@
+# Copyright (C) 2026  Ethan FAN <fyz.214037@foxmail.com>
+# This file is part of Prefect AutoML Platform and is licensed under AGPL-3.0-or-later.
+# See LICENSE for details.
+
 """数据库连接上传服务。
 
 支持 MySQL、PostgreSQL、ClickHouse、SQLite 通过 SQL 查询导入数据集。

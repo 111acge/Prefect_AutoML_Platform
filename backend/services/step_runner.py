@@ -1,3 +1,7 @@
+# Copyright (C) 2026  Ethan FAN <fyz.214037@foxmail.com>
+# This file is part of Prefect AutoML Platform and is licensed under AGPL-3.0-or-later.
+# See LICENSE for details.
+
 """原子步骤执行器。
 
 将数据科学流程拆分为独立、可重试、可观测的步骤，每个步骤通过文件产物传递状态，
