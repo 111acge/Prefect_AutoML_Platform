@@ -11,9 +11,14 @@ See LICENSE for details.
         <div class="card-header">
           <span>{{ $t('dataset.title') }}</span>
           <div>
-            <el-button type="success" @click="trainDefaultDataset" :loading="trainingDefault">
+            <el-dropdown split-button type="success" @click="trainDefaultDataset" :loading="trainingDefault" style="margin-right: 8px;">
               <el-icon><component :is="Cpu" /></el-icon> {{ $t('dataset.useDefault') }}
-            </el-button>
+              <template #dropdown>
+                <el-dropdown-item @click="trainRegressionDefaultDataset">
+                  {{ $t('dataset.useDefaultRegression') }}
+                </el-dropdown-item>
+              </template>
+            </el-dropdown>
             <el-button type="primary" @click="showUploadDialog = true">
               <el-icon><component :is="Upload" /></el-icon> {{ $t('dataset.upload') }}
             </el-button>
@@ -467,10 +472,10 @@ const formatDate = (date) => {
   return new Date(date).toLocaleString()
 }
 
-const trainDefaultDataset = async () => {
+const trainDefaultDatasetByName = async (name, targetColumn, taskType) => {
   try {
     const res = await datasetApi.list()
-    const defaultDataset = res.data.find((d) => d.name === 'iris')
+    const defaultDataset = res.data.find((d) => d.name === name)
     if (!defaultDataset) {
       ElMessage.warning(t('dataset.defaultNotReady'))
       return
@@ -480,8 +485,8 @@ const trainDefaultDataset = async () => {
     ElMessage.info(t('dataset.defaultStarting'))
     const runRes = await runApi.create({
       dataset_id: defaultDataset.id,
-      target_column: 'target',
-      task_type: 'multiclass_classification',
+      target_column: targetColumn,
+      task_type: taskType,
       time_budget_minutes: 5,
       preset: 'auto',
     })
@@ -492,6 +497,14 @@ const trainDefaultDataset = async () => {
   } finally {
     trainingDefault.value = false
   }
+}
+
+const trainDefaultDataset = async () => {
+  await trainDefaultDatasetByName('iris', 'target', 'multiclass_classification')
+}
+
+const trainRegressionDefaultDataset = async () => {
+  await trainDefaultDatasetByName('temperature', 'temperature', 'regression')
 }
 
 onMounted(fetchDatasets)

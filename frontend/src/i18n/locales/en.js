@@ -76,6 +76,7 @@ export default {
   dataset: {
     title: 'Dataset Management',
     useDefault: 'Train with Default Dataset',
+    useDefaultRegression: 'Train with Default Regression Dataset',
     upload: 'Upload Dataset',
     searchPlaceholder: 'Search dataset name',
     batchDelete: 'Batch Delete ({count})',

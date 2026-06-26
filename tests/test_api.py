@@ -38,19 +38,19 @@ def default_dataset():
     """创建默认数据集记录。"""
     from services.seed_data import ensure_default_dataset
 
-    return _async_run(ensure_default_dataset())
+    return _async_run(ensure_default_dataset("iris"))
 
 
 @pytest.fixture(autouse=True)
 def setup_database():
     """每个测试前重置数据库并加载默认数据集。"""
-    from services.seed_data import ensure_default_dataset
+    from services.seed_data import ensure_all_default_datasets
 
     async def _reset():
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)
             await conn.run_sync(Base.metadata.create_all)
-        await ensure_default_dataset()
+        await ensure_all_default_datasets()
 
     _async_run(_reset())
     yield
@@ -79,9 +79,14 @@ def test_default_dataset_loaded():
     response = client.get("/api/datasets")
     assert response.status_code == 200
     data = response.json()
-    assert len(data) == 1
-    assert data[0]["name"] == "iris"
-    assert data[0]["target_column"] == "target"
+    names = {d["name"] for d in data}
+    assert "iris" in names
+    assert "temperature" in names
+    iris = next(d for d in data if d["name"] == "iris")
+    assert iris["target_column"] == "target"
+    temperature = next(d for d in data if d["name"] == "temperature")
+    assert temperature["target_column"] == "temperature"
+    assert temperature["task_type"] == "regression"
 
 
 def test_upload_dataset():

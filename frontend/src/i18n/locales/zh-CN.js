@@ -76,6 +76,7 @@ export default {
   dataset: {
     title: '数据集管理',
     useDefault: '使用默认数据集训练',
+    useDefaultRegression: '使用默认回归数据集训练',
     upload: '上传数据集',
     searchPlaceholder: '搜索数据集名称',
     batchDelete: '批量删除 ({count})',

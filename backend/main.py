@@ -19,7 +19,7 @@ from i18n import _
 from i18n.dependencies import get_locale
 from routers import datasets, runs, intent, experiments, llm_settings
 from services.llm_settings_service import init_llm_config
-from services.seed_data import ensure_default_dataset
+from services.seed_data import ensure_all_default_datasets
 from services.training_executor import training_executor
 
 # 配置日志
@@ -37,7 +37,7 @@ async def lifespan(app: FastAPI):
     # 加载 LLM 用户配置
     await init_llm_config()
     # 加载默认数据集
-    await ensure_default_dataset()
+    await ensure_all_default_datasets()
     yield
     # 关闭时停止训练执行器后台循环
     training_executor.shutdown()
