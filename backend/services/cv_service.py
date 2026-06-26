@@ -45,6 +45,7 @@ from sklearn.model_selection import (
 from sklearn.pipeline import Pipeline
 
 from services.preprocessing_pipeline import DataPreprocessor
+from i18n import _
 
 
 def get_cv_splitter(
@@ -72,8 +73,11 @@ def get_cv_splitter(
         if min_class_count < 2:
             # 最小类只有 1 个样本时无法使用 StratifiedKFold，回退到非分层 KFold
             logger.warning(
-                f"最小类样本数={min_class_count}，无法使用 StratifiedKFold，"
-                f"回退到 KFold(n_splits={n_folds})"
+                _(
+                    "training.stratified_fallback_to_kfold",
+                    count=min_class_count,
+                    n_folds=n_folds,
+                )
             )
             return KFold(n_splits=n_folds, shuffle=True, random_state=42)
         # StratifiedKFold 要求每折都包含所有类别，因此 n_folds <= min_class_count

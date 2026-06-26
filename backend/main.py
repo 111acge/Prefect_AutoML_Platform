@@ -11,10 +11,12 @@ os.environ.setdefault("PREFECT_API_URL", "")
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
+from i18n import _
+from i18n.dependencies import get_locale
 from routers import datasets, runs, intent, experiments, llm_settings
 from services.llm_settings_service import init_llm_config
 from services.seed_data import ensure_default_dataset
@@ -43,7 +45,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Prefect AutoML Platform API",
-    description="端到端全自动机器学习平台后端 API",
+    description=_("app.description"),
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -57,12 +59,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 注册路由
-app.include_router(datasets.router, prefix="/api/datasets")
-app.include_router(runs.router, prefix="/api/runs")
-app.include_router(intent.router, prefix="/api/intent")
-app.include_router(experiments.router, prefix="/api/experiments")
-app.include_router(llm_settings.router, prefix="/api/settings")
+# 注册路由，注入 locale 依赖
+app.include_router(datasets.router, prefix="/api/datasets", dependencies=[Depends(get_locale)])
+app.include_router(runs.router, prefix="/api/runs", dependencies=[Depends(get_locale)])
+app.include_router(intent.router, prefix="/api/intent", dependencies=[Depends(get_locale)])
+app.include_router(experiments.router, prefix="/api/experiments", dependencies=[Depends(get_locale)])
+app.include_router(llm_settings.router, prefix="/api/settings", dependencies=[Depends(get_locale)])
 
 
 @app.get("/health")

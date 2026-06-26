@@ -6,18 +6,18 @@ See LICENSE for details.
 
 <template>
   <div class="pipeline-view">
-    <el-page-header @back="goBack" title="Pipeline 流水线" />
+    <el-page-header @back="goBack" :title="$t('pipeline.title')" />
 
     <el-card class="run-info" v-if="run">
       <el-descriptions :column="3" border>
-        <el-descriptions-item label="Run ID">{{ run.id }}</el-descriptions-item>
-        <el-descriptions-item label="状态">
+        <el-descriptions-item :label="$t('pipeline.info.runId')">{{ run.id }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('pipeline.info.status')">
           <el-tag :type="statusType(run.status)">{{ run.status }}</el-tag>
         </el-descriptions-item>
-        <el-descriptions-item label="数据集">{{ run.dataset_id }}</el-descriptions-item>
-        <el-descriptions-item label="目标列">{{ run.config?.target_column }}</el-descriptions-item>
-        <el-descriptions-item label="任务类型">{{ taskTypeLabel(run.config?.task_type) }}</el-descriptions-item>
-        <el-descriptions-item label="时间预算">{{ run.time_budget_minutes ?? '无限制' }} min</el-descriptions-item>
+        <el-descriptions-item :label="$t('pipeline.info.dataset')">{{ run.dataset_id }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('pipeline.info.targetColumn')">{{ run.config?.target_column }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('pipeline.info.taskType')">{{ taskTypeLabel(run.config?.task_type) }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('pipeline.info.timeBudget')">{{ run.time_budget_minutes ?? $t('common.unlimited') }} min</el-descriptions-item>
       </el-descriptions>
     </el-card>
 
@@ -48,7 +48,7 @@ See LICENSE for details.
                   :loading="pipeline.loading"
                   @click="runStep(selectedStep.step_name)"
                 >
-                  执行此步骤
+                  {{ $t('pipeline.executeStep') }}
                 </el-button>
                 <el-button
                   v-if="selectedStep.status === 'completed'"
@@ -56,22 +56,22 @@ See LICENSE for details.
                   :loading="artifactLoading"
                   @click="loadArtifacts(selectedStep.step_name)"
                 >
-                  刷新产物
+                  {{ $t('pipeline.refreshArtifact') }}
                 </el-button>
               </div>
             </div>
           </template>
 
           <div class="step-meta">
-            <p><strong>状态：</strong>{{ statusLabel(selectedStep.status) }}</p>
+            <p><strong>{{ $t('pipeline.stepMeta.status') }}：</strong>{{ statusLabel(selectedStep.status) }}</p>
             <p v-if="selectedStep.started_at">
-              <strong>开始：</strong>{{ formatTime(selectedStep.started_at) }}
+              <strong>{{ $t('pipeline.stepMeta.started') }}：</strong>{{ formatTime(selectedStep.started_at) }}
             </p>
             <p v-if="selectedStep.completed_at">
-              <strong>完成：</strong>{{ formatTime(selectedStep.completed_at) }}
+              <strong>{{ $t('pipeline.stepMeta.completed') }}：</strong>{{ formatTime(selectedStep.completed_at) }}
             </p>
             <p v-if="selectedStep.error_message" class="error-message">
-              <strong>错误：</strong>{{ selectedStep.error_message }}
+              <strong>{{ $t('pipeline.stepMeta.error') }}：</strong>{{ selectedStep.error_message }}
             </p>
           </div>
 
@@ -79,7 +79,7 @@ See LICENSE for details.
             <div class="artifact-header">
               <h4>{{ artifactTitle }}</h4>
               <el-text v-if="artifactPreview.total !== undefined" type="info" size="small">
-                共 {{ artifactPreview.total }} 行{{ artifactPreview.truncated ? '，仅展示前 20 行' : '' }}
+                {{ $t('pipeline.artifact.rowsTotal', { total: artifactPreview.total }) }}{{ artifactPreview.truncated ? $t('pipeline.artifact.rowsTruncated') : '' }}
               </el-text>
             </div>
 
@@ -110,7 +110,7 @@ See LICENSE for details.
             <!-- 可下载二进制 -->
             <div v-else-if="artifactPreview.type === 'download'" class="artifact-download">
               <el-alert
-                title="该产物为二进制文件，无法直接预览"
+                :title="$t('pipeline.artifact.binary')"
                 type="info"
                 :closable="false"
                 show-icon
@@ -122,13 +122,13 @@ See LICENSE for details.
                 tag="a"
                 style="margin-top: 12px"
               >
-                下载 {{ artifactPreview.filename }}
+                {{ $t('pipeline.artifact.download', { filename: artifactPreview.filename }) }}
               </el-button>
             </div>
           </div>
 
           <div v-else-if="selectedStep.status === 'completed'" class="artifact-hint">
-            <el-text type="info">点击“刷新产物”查看此步骤输出</el-text>
+            <el-text type="info">{{ $t('pipeline.artifact.empty') }}</el-text>
           </div>
         </el-card>
 
@@ -139,7 +139,7 @@ See LICENSE for details.
             :disabled="pipeline.allCompleted"
             @click="continueRun"
           >
-            继续下一步
+            {{ $t('pipeline.continueNext') }}
           </el-button>
           <el-button
             type="success"
@@ -147,17 +147,17 @@ See LICENSE for details.
             :disabled="pipeline.allCompleted"
             @click="runAll"
           >
-            执行全部剩余步骤
+            {{ $t('pipeline.runAllRemaining') }}
           </el-button>
-          <el-button @click="refresh">刷新状态</el-button>
+          <el-button @click="refresh">{{ $t('pipeline.refreshStatus') }}</el-button>
           <el-button v-if="run?.status === 'completed'" @click="goResults">
-            查看完整结果
+            {{ $t('pipeline.viewFullResult') }}
           </el-button>
         </el-card>
 
         <el-card class="logs-card">
           <template #header>
-            <span>训练日志</span>
+            <span>{{ $t('pipeline.logs') }}</span>
           </template>
           <el-input
             v-model="pipeline.logs"
@@ -175,11 +175,13 @@ See LICENSE for details.
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { usePipelineStore } from '@/stores/pipeline'
 import { ElMessage } from 'element-plus'
 
 const route = useRoute()
 const router = useRouter()
+const { t } = useI18n()
 const pipeline = usePipelineStore()
 
 const runId = computed(() => route.params.id)
@@ -201,25 +203,25 @@ const activeIndex = computed(() => {
 })
 
 const stepTitles = {
-  ingest: '数据加载与 Schema 校验',
-  analyze: '元数据分析',
-  quality: '数据质量评估',
-  strategy: '训练策略构建',
-  split: '训练/验证/测试划分',
-  cross_validate: '交叉验证',
-  fit_preprocessor: '拟合预处理器',
-  transform: '数据转换',
-  sample: '条件采样',
-  train: '模型训练',
-  evaluate: '模型评估',
-  interpret: '业务解读',
-  report: 'HTML 报告',
+  ingest: t('pipeline.steps.ingest'),
+  analyze: t('pipeline.steps.analyze'),
+  quality: t('pipeline.steps.quality'),
+  strategy: t('pipeline.steps.strategy'),
+  split: t('pipeline.steps.split'),
+  cross_validate: t('pipeline.steps.cross_validate'),
+  fit_preprocessor: t('pipeline.steps.fit_preprocessor'),
+  transform: t('pipeline.steps.transform'),
+  sample: t('pipeline.steps.sample'),
+  train: t('pipeline.steps.train'),
+  evaluate: t('pipeline.steps.evaluate'),
+  interpret: t('pipeline.steps.interpret'),
+  report: t('pipeline.steps.report'),
 }
 
 const taskTypeLabels = {
-  binary_classification: '二分类',
-  multiclass_classification: '多分类',
-  regression: '回归',
+  binary_classification: t('trainForm.binary'),
+  multiclass_classification: t('trainForm.multiclass'),
+  regression: t('trainForm.regression'),
 }
 
 // 步骤 -> 产物名称 & 展示类型
@@ -248,18 +250,18 @@ function taskTypeLabel(type) {
 }
 
 function stepDescription(step) {
-  if (step.status === 'running') return '执行中...'
-  if (step.status === 'completed') return '已完成'
-  if (step.status === 'failed') return step.error_message || '失败'
-  return '等待执行'
+  if (step.status === 'running') return t('pipeline.stepDescriptions.running')
+  if (step.status === 'completed') return t('pipeline.stepDescriptions.completed')
+  if (step.status === 'failed') return step.error_message || t('pipeline.stepDescriptions.failed')
+  return t('pipeline.stepDescriptions.pending')
 }
 
 function statusLabel(status) {
   const map = {
-    pending: '等待执行',
-    running: '执行中',
-    completed: '已完成',
-    failed: '失败',
+    pending: t('pipeline.stepDescriptions.pending'),
+    running: t('pipeline.stepDescriptions.running'),
+    completed: t('pipeline.stepDescriptions.completed'),
+    failed: t('pipeline.stepDescriptions.failed'),
   }
   return map[status] || status
 }
@@ -313,35 +315,35 @@ async function refresh() {
 async function runStep(stepName) {
   try {
     await pipeline.executeStep(stepName)
-    ElMessage.success(`已提交步骤：${stepName}`)
+    ElMessage.success(t('pipeline.messages.stepSubmitted', { name: stepName }))
     startPolling()
   } catch (e) {
-    ElMessage.error(e.message || '执行失败')
+    ElMessage.error(e.message || t('pipeline.messages.stepExecuteFailed'))
   }
 }
 
 async function continueRun() {
   try {
     await pipeline.continueRun()
-    ElMessage.success('已提交下一步')
+    ElMessage.success(t('pipeline.messages.nextSubmitted'))
     startPolling()
   } catch (e) {
-    ElMessage.error(e.message || '继续执行失败')
+    ElMessage.error(e.message || t('pipeline.messages.continueFailed'))
   }
 }
 
 async function runAll() {
   const pending = steps.value.filter((s) => s.status === 'pending' || s.status === 'failed')
   if (pending.length === 0) {
-    ElMessage.info('没有待执行的步骤')
+    ElMessage.info(t('pipeline.messages.noPending'))
     return
   }
   try {
     await pipeline.continueRun()
-    ElMessage.success('已开始执行后续步骤')
+    ElMessage.success(t('pipeline.messages.runAllStarted'))
     startPolling()
   } catch (e) {
-    ElMessage.error(e.message || '执行失败')
+    ElMessage.error(e.message || t('pipeline.messages.stepExecuteFailed'))
   }
 }
 
@@ -350,11 +352,11 @@ const artifactTitle = computed(() => {
   const meta = artifactMeta[selectedStep.value.step_name]
   if (!meta) return ''
   const titles = {
-    json: 'JSON 产物',
-    csv: 'CSV 产物预览',
-    parquet: 'Parquet 产物预览',
-    html: 'HTML 报告',
-    download: '产物下载',
+    json: t('pipeline.artifact.json'),
+    csv: t('pipeline.artifact.csv'),
+    parquet: t('pipeline.artifact.parquet'),
+    html: t('pipeline.artifact.html'),
+    download: t('pipeline.artifact.download', { filename: meta.name }),
   }
   return titles[meta.type] || meta.name
 })
@@ -401,7 +403,7 @@ async function loadArtifacts(stepName) {
     currentObjectUrl = URL.createObjectURL(blob)
     artifactPreview.value = { type: 'download', url: currentObjectUrl, filename }
   } catch (e) {
-    ElMessage.warning(`产物暂不可用：${e.message}`)
+    ElMessage.warning(t('pipeline.messages.artifactUnavailable', { msg: e.message }))
   } finally {
     artifactLoading.value = false
   }

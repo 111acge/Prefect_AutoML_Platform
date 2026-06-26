@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import RobustScaler, StandardScaler, MinMaxScaler
+from i18n import _
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,7 @@ class FeatureEngineer:
         if self.text_embeddings and self.text_cols:
             self.text_encoder = _load_text_encoder(self.text_model_name)
             if self.text_encoder is None:
-                logger.warning("sentence-transformers 未安装，跳过文本 Embedding")
+                logger.warning(_("feature_engineering.sentence_transformers_skip_embedding"))
 
         # 条件降维
         feature_df = self._get_feature_df(df)
@@ -138,12 +139,19 @@ class FeatureEngineer:
             self.pca, self.pca_columns = _learn_pca(reduced_df, self.pca_variance_ratio)
 
         logger.info(
-            f"FeatureEngineer 拟合完成: numeric={len(self.numeric_cols)}, "
-            f"categorical={len(self.categorical_cols)}, datetime={len(self.datetime_cols)}, "
-            f"text={len(self.text_cols)}, one_hot={len(self.one_hot_maps)}, "
-            f"target_encoding={len(self.target_encodings)}, scaler={chosen_scaler}, "
-            f"corr_drop={len(self.high_correlation_drop)}, var_drop={len(self.low_variance_drop)}, "
-            f"pca={self.pca is not None}"
+            _(
+                "feature_engineering.fitted",
+                numeric=len(self.numeric_cols),
+                categorical=len(self.categorical_cols),
+                datetime=len(self.datetime_cols),
+                text=len(self.text_cols),
+                one_hot=len(self.one_hot_maps),
+                target_encoding=len(self.target_encodings),
+                scaler=chosen_scaler,
+                corr_drop=len(self.high_correlation_drop),
+                var_drop=len(self.low_variance_drop),
+                pca=self.pca is not None,
+            )
         )
         return self
 
@@ -380,7 +388,7 @@ def _load_text_encoder(model_name: str) -> Optional[Any]:
 
         return SentenceTransformer(model_name)
     except Exception as e:
-        logger.warning(f"文本编码器加载失败: {e}")
+        logger.warning(_("feature_engineering.text_encoder_load_failed", msg=e))
         return None
 
 
@@ -397,7 +405,12 @@ def _apply_text_embeddings(
             for i in range(embeddings.shape[1]):
                 df[f"{col}_emb_{i}"] = embeddings[:, i]
         except Exception as e:
-            logger.warning(f"文本 Embedding 生成失败 ({col}): {e}")
+            logger.warning(
+                _(
+                    "feature_engineering.text_embedding_failed",
+                    msg=f"({col}): {e}",
+                )
+            )
     return df
 
 
@@ -504,7 +517,7 @@ def _learn_low_variance_drop(df: pd.DataFrame, threshold: float) -> List[str]:
         selector.fit(df)
         return [c for i, c in enumerate(df.columns) if not selector.get_support()[i]]
     except Exception as e:
-        logger.warning(f"低方差剔除失败: {e}")
+        logger.warning(_("feature_engineering.low_variance_failed", msg=e))
         return []
 
 
@@ -518,7 +531,7 @@ def _learn_pca(df: pd.DataFrame, variance_ratio: float) -> tuple:
         pca.fit(df)
         return pca, df.columns.tolist()
     except Exception as e:
-        logger.warning(f"PCA 学习失败: {e}")
+        logger.warning(_("feature_engineering.pca_failed", msg=e))
         return None, []
 
 

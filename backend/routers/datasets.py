@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
+from i18n import _
 from models import Dataset
 from schemas import (
     DatasetResponse,
@@ -104,7 +105,7 @@ async def get_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Dataset).where(Dataset.id == dataset_id))
     dataset = result.scalar_one_or_none()
     if not dataset:
-        raise HTTPException(status_code=404, detail="数据集不存在")
+        raise HTTPException(status_code=404, detail=_("dataset.not_found"))
     return dataset
 
 
@@ -114,7 +115,7 @@ async def preview_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Dataset).where(Dataset.id == dataset_id))
     dataset = result.scalar_one_or_none()
     if not dataset:
-        raise HTTPException(status_code=404, detail="数据集不存在")
+        raise HTTPException(status_code=404, detail=_("dataset.not_found"))
 
     try:
         df = load_dataframe(dataset.file_path)
@@ -136,7 +137,7 @@ async def update_dataset(
     result = await db.execute(select(Dataset).where(Dataset.id == dataset_id))
     dataset = result.scalar_one_or_none()
     if not dataset:
-        raise HTTPException(status_code=404, detail="数据集不存在")
+        raise HTTPException(status_code=404, detail=_("dataset.not_found"))
 
     df = load_dataframe(dataset.file_path)
 
@@ -153,7 +154,7 @@ async def update_dataset(
     if not target_column or target_column not in df.columns:
         raise HTTPException(
             status_code=400,
-            detail=f"目标列 '{target_column}' 不存在或无法自动推断",
+            detail=_("dataset.target_column_missing", column=target_column),
         )
 
     # 校验任务类型与目标列是否匹配
@@ -166,15 +167,15 @@ async def update_dataset(
     if task_type == "binary_classification" and unique_count != 2:
         raise HTTPException(
             status_code=400,
-            detail=f"二分类任务要求目标列恰好有 2 个唯一值，当前有 {unique_count} 个",
+            detail=_("dataset.binary_requires_two", count=unique_count),
         )
     if task_type == "multiclass_classification" and unique_count < 3:
         raise HTTPException(
             status_code=400,
-            detail=f"多分类任务要求目标列至少有 3 个唯一值，当前有 {unique_count} 个",
+            detail=_("dataset.multiclass_requires_three", count=unique_count),
         )
     if task_type == "regression" and not is_numeric:
-        raise HTTPException(status_code=400, detail="回归任务要求目标列为数值类型")
+        raise HTTPException(status_code=400, detail=_("dataset.regression_requires_numeric"))
 
     dataset.target_column = target_column
     dataset.task_type = task_type
@@ -195,7 +196,7 @@ async def get_dataset_schema(dataset_id: str, db: AsyncSession = Depends(get_db)
     result = await db.execute(select(Dataset).where(Dataset.id == dataset_id))
     dataset = result.scalar_one_or_none()
     if not dataset:
-        raise HTTPException(status_code=404, detail="数据集不存在")
+        raise HTTPException(status_code=404, detail=_("dataset.not_found"))
 
     try:
         schema = build_schema_from_file(dataset.file_path, target_column=dataset.target_column)
@@ -210,7 +211,7 @@ async def validate_dataset_schema(dataset_id: str, db: AsyncSession = Depends(ge
     result = await db.execute(select(Dataset).where(Dataset.id == dataset_id))
     dataset = result.scalar_one_or_none()
     if not dataset:
-        raise HTTPException(status_code=404, detail="数据集不存在")
+        raise HTTPException(status_code=404, detail=_("dataset.not_found"))
 
     try:
         schema = build_schema_from_file(dataset.file_path, target_column=dataset.target_column)
@@ -229,7 +230,7 @@ async def get_dataset_quality(dataset_id: str, db: AsyncSession = Depends(get_db
     result = await db.execute(select(Dataset).where(Dataset.id == dataset_id))
     dataset = result.scalar_one_or_none()
     if not dataset:
-        raise HTTPException(status_code=404, detail="数据集不存在")
+        raise HTTPException(status_code=404, detail=_("dataset.not_found"))
 
     try:
         df = load_dataframe(dataset.file_path)
@@ -245,7 +246,7 @@ async def get_cleaning_rules(dataset_id: str, db: AsyncSession = Depends(get_db)
     result = await db.execute(select(Dataset).where(Dataset.id == dataset_id))
     dataset = result.scalar_one_or_none()
     if not dataset:
-        raise HTTPException(status_code=404, detail="数据集不存在")
+        raise HTTPException(status_code=404, detail=_("dataset.not_found"))
 
     rules = (dataset.schema_info or {}).get("cleaning_rules", {})
     return CleaningRules(**rules)
@@ -261,7 +262,7 @@ async def update_cleaning_rules(
     result = await db.execute(select(Dataset).where(Dataset.id == dataset_id))
     dataset = result.scalar_one_or_none()
     if not dataset:
-        raise HTTPException(status_code=404, detail="数据集不存在")
+        raise HTTPException(status_code=404, detail=_("dataset.not_found"))
 
     schema_info = dataset.schema_info or {}
     schema_info["cleaning_rules"] = request.model_dump()
@@ -286,10 +287,10 @@ async def connect_database(
             request.query,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"数据库查询失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=_("dataset.db_query_failed", msg=str(e)))
 
     if df.empty:
-        raise HTTPException(status_code=400, detail="查询结果为空")
+        raise HTTPException(status_code=400, detail=_("dataset.query_empty"))
 
     try:
         dataset = Dataset(name=request.name or build_connection_display_name(request.connection_type, request.connection_params))
@@ -322,13 +323,13 @@ async def delete_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Dataset).where(Dataset.id == dataset_id))
     dataset = result.scalar_one_or_none()
     if not dataset:
-        raise HTTPException(status_code=404, detail="数据集不存在")
+        raise HTTPException(status_code=404, detail=_("dataset.not_found"))
 
     try:
         storage_service.delete_dataset_files(dataset_id)
         await db.delete(dataset)
         await db.commit()
-        return {"success": True, "message": "数据集已删除"}
+        return {"success": True, "message": _("dataset.deleted")}
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

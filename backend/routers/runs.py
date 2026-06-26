@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from database import get_db
+from i18n import _, get_locale
 from models import Dataset, Run, RunStep
 
 logger = logging.getLogger(__name__)
@@ -112,7 +113,7 @@ async def create_run(
     result = await db.execute(select(Dataset).where(Dataset.id == request.dataset_id))
     dataset = result.scalar_one_or_none()
     if not dataset:
-        raise HTTPException(status_code=404, detail="数据集不存在")
+        raise HTTPException(status_code=404, detail=_("dataset.not_found"))
 
     # 自动填充目标列和任务类型
     target_column = request.target_column or dataset.target_column
@@ -126,15 +127,15 @@ async def create_run(
         task_type = schema_info.get("suggested_task_type")
 
     if not target_column:
-        raise HTTPException(status_code=400, detail="无法确定目标列，请在上传数据集时指定或更新数据集")
+        raise HTTPException(status_code=400, detail=_("run.missing_target_column"))
     if not task_type:
-        raise HTTPException(status_code=400, detail="无法确定任务类型，请在上传数据集时指定或更新数据集")
+        raise HTTPException(status_code=400, detail=_("run.missing_task_type"))
 
     # 一次性加载数据，避免重复 I/O
     try:
         df = await asyncio.to_thread(load_dataframe, dataset.file_path)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"加载数据集失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=_("run.load_failed", msg=str(e)))
 
     # 校验任务类型与目标列是否匹配
     try:
@@ -155,12 +156,12 @@ async def create_run(
         if errors:
             raise HTTPException(
                 status_code=400,
-                detail=f"Schema 校验失败: {'; '.join(errors)}",
+                detail=_("run.schema_validation_failed", errors="; ".join(errors)),
             )
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Schema 校验异常: {str(e)}")
+        raise HTTPException(status_code=500, detail=_("run.schema_validation_error", msg=str(e)))
 
     try:
         output_dir = _get_output_dir("temp")
@@ -205,6 +206,7 @@ async def create_run(
             experiment_id=request.experiment_id,
             candidate_config=request.candidate_config,
             rare_class_strategy=request.rare_class_strategy,
+            locale=get_locale(),
         )
         snapshot = _build_config_snapshot(dataset, snapshot_request)
         snapshot_path = output_dir / "config_snapshot.json"
@@ -317,33 +319,33 @@ def _validate_task_type(
     if df is None:
         df = load_dataframe(file_path)
     if target_column not in df.columns:
-        raise ValueError(f"目标列 '{target_column}' 不存在")
+        raise ValueError(_("data.target_column_not_found", column=target_column))
 
     # 退化数据集校验
     feature_cols = [c for c in df.columns if c != target_column]
     if len(df) < 10:
-        raise ValueError(f"样本数过少，至少需要 10 行，当前 {len(df)} 行")
+        raise ValueError(_("run.sample_too_small", min=10, actual=len(df)))
     if len(feature_cols) < 1:
-        raise ValueError("至少需要 1 个特征列")
+        raise ValueError(_("run.no_feature_columns"))
 
     y = df[target_column]
 
     if y.isnull().all():
-        raise ValueError("目标列全部为缺失值，无法训练")
+        raise ValueError(_("run.target_all_missing"))
 
     y_dropped = y.dropna()
     unique_count = y_dropped.nunique()
     is_numeric = pd.api.types.is_numeric_dtype(y)
 
     if unique_count <= 1:
-        raise ValueError(f"目标列唯一值数量不足，当前 {unique_count} 个")
+        raise ValueError(_("run.target_unique_insufficient", count=unique_count))
 
     if task_type == "binary_classification" and unique_count != 2:
-        raise ValueError(f"二分类任务要求目标列恰好有 2 个唯一值，当前有 {unique_count} 个")
+        raise ValueError(_("dataset.binary_requires_two", count=unique_count))
     if task_type == "multiclass_classification" and unique_count < 2:
-        raise ValueError(f"多分类任务要求目标列至少有 2 个唯一值，当前有 {unique_count} 个")
+        raise ValueError(_("run.multiclass_requires_two", count=unique_count))
     if task_type == "regression" and not is_numeric:
-        raise ValueError("回归任务要求目标列为数值类型")
+        raise ValueError(_("dataset.regression_requires_numeric"))
 
     # 分类任务中若最小类样本数极少，不再直接拒绝训练。
     # 下游 split_data / AutoGluon 会通过 rare_class_strategy 自动过采样或限制折数。
@@ -373,11 +375,11 @@ async def compare_runs(request: RunCompareRequest, db: AsyncSession = Depends(ge
 
     missing = [rid for rid in request.run_ids if rid not in run_map]
     if missing:
-        raise HTTPException(status_code=404, detail=f"任务不存在: {', '.join(missing)}")
+        raise HTTPException(status_code=404, detail=_("run.not_found") + f": {', '.join(missing)}")
 
     not_completed = [rid for rid in request.run_ids if run_map[rid].status != "completed"]
     if not_completed:
-        raise HTTPException(status_code=400, detail=f"以下任务尚未完成: {', '.join(not_completed)}")
+        raise HTTPException(status_code=400, detail=_("run.not_completed") + f": {', '.join(not_completed)}")
 
     items: List[RunCompareItem] = []
     metric_name = None
@@ -492,7 +494,7 @@ async def get_run(run_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Run).where(Run.id == run_id))
     run = result.scalar_one_or_none()
     if not run:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_("run.not_found"))
     return run
 
 
@@ -502,7 +504,7 @@ async def list_run_steps(run_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Run).where(Run.id == run_id))
     run = result.scalar_one_or_none()
     if not run:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_("run.not_found"))
 
     result = await db.execute(
         select(RunStep).where(RunStep.run_id == run_id).order_by(RunStep.sequence)
@@ -519,19 +521,19 @@ async def execute_run_step(
 ):
     """执行单个步骤。"""
     if step_name not in STEP_ORDER:
-        raise HTTPException(status_code=400, detail=f"未知步骤: {step_name}")
+        raise HTTPException(status_code=400, detail=_("run.step_unknown", step=step_name))
 
     result = await db.execute(select(Run).where(Run.id == run_id))
     run = result.scalar_one_or_none()
     if not run:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_("run.not_found"))
 
     step_result = await db.execute(
         select(RunStep).where(RunStep.run_id == run_id, RunStep.step_name == step_name)
     )
     step = step_result.scalar_one_or_none()
     if step is not None and step.status == "running":
-        raise HTTPException(status_code=409, detail=f"步骤 {step_name} 正在执行中")
+        raise HTTPException(status_code=409, detail=_("run.step_running", step=step_name))
 
     # 提交单步任务到执行器
     config = run.config or {}
@@ -549,6 +551,7 @@ async def execute_run_step(
     file_path = (dataset.file_path if dataset else None) or snapshot.get("dataset_file_path")
 
     training_executor.submit_step_sync(
+        locale=get_locale(),
         run_id=run.id,
         file_path=file_path,
         target_column=snapshot.get("target_column"),
@@ -593,12 +596,12 @@ async def continue_run(
     result = await db.execute(select(Run).where(Run.id == run_id))
     run = result.scalar_one_or_none()
     if not run:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_("run.not_found"))
 
     if request.step_name:
         target_step = request.step_name
         if target_step not in STEP_ORDER:
-            raise HTTPException(status_code=400, detail=f"未知步骤: {target_step}")
+            raise HTTPException(status_code=400, detail=_("run.step_unknown", step=target_step))
     else:
         result = await db.execute(
             select(RunStep)
@@ -612,7 +615,7 @@ async def continue_run(
                 target_step = step.step_name
                 break
         if target_step is None:
-            raise HTTPException(status_code=400, detail="所有步骤已完成")
+            raise HTTPException(status_code=400, detail=_("run.all_steps_completed"))
 
     return await execute_run_step(run_id, target_step, db)
 
@@ -630,7 +633,7 @@ async def get_artifact(run_id: str, artifact_name: str, db: AsyncSession = Depen
     result = await db.execute(select(Run).where(Run.id == run_id))
     run = result.scalar_one_or_none()
     if not run:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_("run.not_found"))
 
     manifest = StepManifest(run.output_dir)
     json_artifacts = {
@@ -661,17 +664,17 @@ async def get_artifact(run_id: str, artifact_name: str, db: AsyncSession = Depen
     if artifact_name in json_artifacts:
         path = json_artifacts[artifact_name]
         if not path.exists():
-            raise HTTPException(status_code=404, detail="产物不存在")
+            raise HTTPException(status_code=404, detail=_("run.artifact_not_found"))
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as e:
-            raise HTTPException(status_code=500, detail=f"读取产物失败: {e}")
+            raise HTTPException(status_code=500, detail=_("run.artifact_read_failed", msg=e))
         return data
 
     if artifact_name in file_artifacts:
         path = file_artifacts[artifact_name]
         if not path.exists():
-            raise HTTPException(status_code=404, detail="产物不存在")
+            raise HTTPException(status_code=404, detail=_("run.artifact_not_found"))
         media_type_map = {
             ".csv": "text/csv",
             ".html": "text/html",
@@ -684,7 +687,7 @@ async def get_artifact(run_id: str, artifact_name: str, db: AsyncSession = Depen
             media_type=media_type_map.get(path.suffix.lower(), "application/octet-stream"),
         )
 
-    raise HTTPException(status_code=400, detail=f"未知产物名称: {artifact_name}")
+    raise HTTPException(status_code=400, detail=_("run.artifact_unknown", name=artifact_name))
 
 
 @router.get("/{run_id}/artifacts/{artifact_name}/preview")
@@ -698,7 +701,7 @@ async def preview_artifact(
     result = await db.execute(select(Run).where(Run.id == run_id))
     run = result.scalar_one_or_none()
     if not run:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_("run.not_found"))
 
     manifest = StepManifest(run.output_dir)
     file_artifacts = {
@@ -719,15 +722,15 @@ async def preview_artifact(
     }
 
     if artifact_name not in file_artifacts:
-        raise HTTPException(status_code=400, detail="该产物不支持预览")
+        raise HTTPException(status_code=400, detail=_("run.artifact_not_previewable"))
 
     path = file_artifacts[artifact_name]
     if not path.exists():
-        raise HTTPException(status_code=404, detail="产物不存在")
+        raise HTTPException(status_code=404, detail=_("run.artifact_not_found"))
 
     suffix = path.suffix.lower()
     if suffix not in {".csv", ".parquet"}:
-        raise HTTPException(status_code=400, detail="仅支持 CSV / Parquet 格式预览")
+        raise HTTPException(status_code=400, detail=_("run.artifact_preview_only_csv_parquet"))
 
     try:
         if suffix == ".csv":
@@ -749,7 +752,7 @@ async def preview_artifact(
         }
     except Exception as e:
         logger.exception("预览产物失败: %s", artifact_name)
-        raise HTTPException(status_code=500, detail=f"预览产物失败: {e}")
+        raise HTTPException(status_code=500, detail=_("run.artifact_preview_failed", msg=e))
 
 
 @router.get("/{run_id}/events")
@@ -758,7 +761,7 @@ async def run_events(run_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Run).where(Run.id == run_id))
     run = result.scalar_one_or_none()
     if not run:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_("run.not_found"))
 
     q: queue.Queue = queue.Queue(maxsize=10)
     training_executor.subscribe_status(run_id, q)
@@ -792,12 +795,12 @@ async def regenerate_interpretation(run_id: str, db: AsyncSession = Depends(get_
     result = await db.execute(select(Run).where(Run.id == run_id))
     run = result.scalar_one_or_none()
     if not run:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_("run.not_found"))
     if run.status != "completed":
-        raise HTTPException(status_code=400, detail="任务尚未完成")
+        raise HTTPException(status_code=400, detail=_("run.not_completed"))
 
     if not get_active_api_key():
-        raise HTTPException(status_code=400, detail="未配置 LLM API Key")
+        raise HTTPException(status_code=400, detail=_("run.no_llm_key"))
 
     output_dir = Path(run.output_dir)
     manifest = StepManifest(output_dir)
@@ -827,7 +830,7 @@ async def regenerate_interpretation(run_id: str, db: AsyncSession = Depends(get_
         return interpretation
     except Exception as e:
         logger.exception("重新生成业务解读失败")
-        raise HTTPException(status_code=500, detail=f"重新生成失败: {e}") from e
+        raise HTTPException(status_code=500, detail=_("run.regenerate_failed", msg=e)) from e
 
 
 @router.get("/{run_id}/results", response_model=RunResult)
@@ -836,7 +839,7 @@ async def get_run_results(run_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Run).where(Run.id == run_id))
     run = result.scalar_one_or_none()
     if not run:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_("run.not_found"))
 
     try:
         output_dir = Path(run.output_dir)
@@ -941,9 +944,9 @@ async def predict(run_id: str, request: PredictionRequest, db: AsyncSession = De
     result = await db.execute(select(Run).where(Run.id == run_id))
     run = result.scalar_one_or_none()
     if not run:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_("run.not_found"))
     if run.status != "completed":
-        raise HTTPException(status_code=400, detail="任务尚未完成")
+        raise HTTPException(status_code=400, detail=_("run.not_completed"))
 
     try:
         import pandas as pd
@@ -976,7 +979,7 @@ async def predict(run_id: str, request: PredictionRequest, db: AsyncSession = De
             missing_cols = set(feature_columns) - set(df.columns)
             if missing_cols:
                 raise HTTPException(
-                    status_code=400, detail=f"输入缺少特征列: {sorted(missing_cols)}"
+                    status_code=400, detail=_("run.missing_feature_columns", columns=sorted(missing_cols))
                 )
             # 只使用训练时的特征列（AutoGluon 需要一致的列）
             df = df[feature_columns]
@@ -1011,9 +1014,9 @@ async def batch_predict(
     result = await db.execute(select(Run).where(Run.id == run_id))
     run = result.scalar_one_or_none()
     if not run:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_("run.not_found"))
     if run.status != "completed":
-        raise HTTPException(status_code=400, detail="任务尚未完成")
+        raise HTTPException(status_code=400, detail=_("run.not_completed"))
 
     try:
         from services.automl import load_predictor
@@ -1047,7 +1050,7 @@ async def batch_predict(
             missing_cols = set(feature_columns) - set(df.columns)
             if missing_cols:
                 raise HTTPException(
-                    status_code=400, detail=f"输入缺少特征列: {sorted(missing_cols)}"
+                    status_code=400, detail=_("run.missing_feature_columns", columns=sorted(missing_cols))
                 )
             df = df[feature_columns]
 
@@ -1088,12 +1091,12 @@ async def explain_sample(
     result = await db.execute(select(Run).where(Run.id == run_id))
     run = result.scalar_one_or_none()
     if not run:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_("run.not_found"))
     if run.status != "completed":
-        raise HTTPException(status_code=400, detail="任务尚未完成")
+        raise HTTPException(status_code=400, detail=_("run.not_completed"))
 
     if len(request.data) != 1:
-        raise HTTPException(status_code=400, detail="每次只能解释一条样本")
+        raise HTTPException(status_code=400, detail=_("run.single_sample_only"))
 
     try:
         from services.automl import load_predictor
@@ -1124,7 +1127,7 @@ async def explain_sample(
             missing_cols = set(feature_columns) - set(df.columns)
             if missing_cols:
                 raise HTTPException(
-                    status_code=400, detail=f"输入缺少特征列: {sorted(missing_cols)}"
+                    status_code=400, detail=_("run.missing_feature_columns", columns=sorted(missing_cols))
                 )
             df = df[feature_columns]
 
@@ -1153,11 +1156,11 @@ async def download_report(
     result = await db.execute(select(Run).where(Run.id == run_id))
     run = result.scalar_one_or_none()
     if not run:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_("run.not_found"))
 
     report_path = Path(run.output_dir) / "report.html"
     if not report_path.exists():
-        raise HTTPException(status_code=404, detail="报告不存在")
+        raise HTTPException(status_code=404, detail=_("run.report_not_found"))
 
     return FileResponse(
         str(report_path),
@@ -1173,14 +1176,14 @@ async def download_model(run_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Run).where(Run.id == run_id))
     run = result.scalar_one_or_none()
     if not run:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_("run.not_found"))
     if run.status != "completed":
-        raise HTTPException(status_code=400, detail="任务尚未完成")
+        raise HTTPException(status_code=400, detail=_("run.not_completed"))
 
     output_dir = Path(run.output_dir)
     model_dir = output_dir / "autogluon_models"
     if not model_dir.exists():
-        raise HTTPException(status_code=404, detail="模型不存在")
+        raise HTTPException(status_code=404, detail=_("run.model_not_found"))
 
     import zipfile
 
@@ -1212,11 +1215,11 @@ async def get_run_logs(run_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Run).where(Run.id == run_id))
     run = result.scalar_one_or_none()
     if not run:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_("run.not_found"))
 
     log_path = Path(run.output_dir) / "training.log"
     if not log_path.exists():
-        return PlainTextResponse("日志尚未生成\n")
+        return PlainTextResponse(_("run.logs_not_ready"))
 
     with open(log_path, "r", encoding="utf-8", errors="replace") as f:
         content = f.read()
@@ -1229,13 +1232,13 @@ async def delete_run(run_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Run).where(Run.id == run_id))
     run = result.scalar_one_or_none()
     if not run:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail=_("run.not_found"))
 
     try:
         storage_service.delete_run_files(run_id)
         await db.delete(run)
         await db.commit()
-        return {"success": True, "message": "任务已删除"}
+        return {"success": True, "message": _("run.deleted")}
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

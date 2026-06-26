@@ -9,6 +9,8 @@ import io
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
+from i18n import _, get_locale
+
 import matplotlib
 
 matplotlib.use("Agg")

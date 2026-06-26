@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from i18n import _
+
 
 class StepManifest:
     """管理单个 Run 在 output_dir 下的所有中间产物路径。
@@ -144,7 +146,7 @@ class StepManifest:
         """读取运行上下文。"""
         ctx = self.load_json(self.run_context_path, {})
         if not ctx:
-            raise FileNotFoundError(f"运行上下文不存在: {self.run_context_path}")
+            raise FileNotFoundError(_("step_manifest.run_context_missing", path=self.run_context_path))
         return ctx
 
     def save_run_context(self, context: Dict[str, Any]) -> None:

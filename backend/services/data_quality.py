@@ -24,6 +24,7 @@ from config import (
     LARGE_DATASET_ROW_THRESHOLD,
     DEFAULT_DATA_QUALITY_SAMPLE_SIZE,
 )
+from i18n import _
 
 
 def assess_data_quality(
@@ -261,38 +262,38 @@ def _generate_warnings(
 
     high_missing = [c for c, r in completeness["missing_rates"].items() if r > 0.5]
     if high_missing:
-        warnings.append(f"完整性：以下列缺失率超过 50%: {high_missing}")
+        warnings.append(_("quality.high_missing", columns=high_missing))
 
     if completeness["rows_with_missing"] > 0:
-        warnings.append(f"完整性：{completeness['rows_with_missing']} 行存在缺失值")
+        warnings.append(_("quality.rows_with_missing", count=completeness["rows_with_missing"]))
 
     if consistency["constant_columns"]:
-        warnings.append(f"一致性：常量/零方差列 {consistency['constant_columns']}")
+        warnings.append(_("quality.constant_columns", columns=consistency["constant_columns"]))
 
     if consistency["mixed_type_columns"]:
         names = [c["column"] for c in consistency["mixed_type_columns"]]
-        warnings.append(f"一致性：以下列存在混合类型 {names}")
+        warnings.append(_("quality.mixed_type_columns", columns=names))
 
     if accuracy["outlier_summary"]:
         names = list(accuracy["outlier_summary"].keys())
-        warnings.append(f"准确性：以下数值列存在异常值 {names}")
+        warnings.append(_("quality.outlier_columns", columns=names))
 
     if accuracy["negative_in_non_negative_columns"]:
         names = [c["column"] for c in accuracy["negative_in_non_negative_columns"]]
-        warnings.append(f"准确性：以下列出现负值 {names}")
+        warnings.append(_("quality.negative_value_columns", columns=names))
 
     if timeliness["future_date_issues"]:
         names = [c["column"] for c in timeliness["future_date_issues"]]
-        warnings.append(f"时效性：以下时间列包含未来日期 {names}")
+        warnings.append(_("quality.future_date_columns", columns=names))
 
     if uniqueness["duplicated_rows"] > 0:
-        warnings.append(f"唯一性：存在 {uniqueness['duplicated_rows']} 条重复行")
+        warnings.append(_("quality.duplicate_rows", count=uniqueness["duplicated_rows"]))
 
     if validity["rare_category_issues"]:
         names = [c["column"] for c in validity["rare_category_issues"]]
-        warnings.append(f"有效性：以下类别列存在稀有取值（可能是错误） {names}")
+        warnings.append(_("quality.rare_category_columns", columns=names))
 
     if target_info.get("missing_count", 0) > 0:
-        warnings.append(f"目标列存在 {target_info['missing_count']} 个缺失值，训练前会被删除")
+        warnings.append(_("quality.target_missing", count=target_info["missing_count"]))
 
     return warnings

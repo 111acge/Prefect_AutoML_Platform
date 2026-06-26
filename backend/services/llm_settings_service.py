@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 from sqlalchemy import select
 
 from config import settings
+from i18n import _
 from database import AsyncSessionLocal
 from models import Setting
 
@@ -105,7 +106,7 @@ async def load_llm_config() -> Dict[str, Any]:
         "api_key": api_key,
         "model": model,
     }
-    logger.info("LLM 配置已加载: provider=%s, model=%s", provider, model)
+    logger.info(_("llm.config_loaded", provider=provider, model=model))
     return _llm_config_cache.copy()
 
 
@@ -118,9 +119,9 @@ async def save_llm_config(provider: str, api_key: str, model: Optional[str] = No
         model: 模型名称，为空时使用默认模型
     """
     if provider not in SUPPORTED_PROVIDERS:
-        raise ValueError(f"不支持的 LLM 提供商: {provider}")
+        raise ValueError(_("llm.unsupported_provider", provider=provider))
     if not api_key or not api_key.strip():
-        raise ValueError("API Key 不能为空")
+        raise ValueError(_("llm.api_key_required"))
 
     model = (model or "").strip() or PROVIDER_DEFAULTS[provider]["default_model"]
 

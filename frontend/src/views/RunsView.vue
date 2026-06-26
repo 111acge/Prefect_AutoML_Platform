@@ -9,12 +9,12 @@ See LICENSE for details.
     <el-card>
       <template #header>
         <div class="card-header">
-          <span>训练任务</span>
+          <span>{{ $t('run.title') }}</span>
           <div>
             <el-button type="primary" @click="showCreateDialog = true">
-              <el-icon><component :is="Plus" /></el-icon> 新建训练任务
+              <el-icon><component :is="Plus" /></el-icon> {{ $t('run.newRun') }}
             </el-button>
-            <el-button @click="fetchRuns">刷新</el-button>
+            <el-button @click="fetchRuns">{{ $t('common.refresh') }}</el-button>
           </div>
         </div>
       </template>
@@ -22,20 +22,20 @@ See LICENSE for details.
       <div class="table-toolbar">
         <el-input
           v-model="searchQuery"
-          placeholder="搜索任务 ID 或数据集"
+          :placeholder="$t('run.searchPlaceholder')"
           style="width: 300px"
           clearable
         />
       </div>
 
       <el-table :data="pagedRuns" v-loading="loading" style="width: 100%">
-        <el-table-column prop="id" label="ID" width="220" sortable>
+        <el-table-column prop="id" :label="$t('run.columns.id')" width="220" sortable>
           <template #default="{ row }">
             <el-link type="primary" @click="viewDetail(row)">{{ row.id }}</el-link>
           </template>
         </el-table-column>
-        <el-table-column prop="dataset_id" label="数据集ID" width="220" sortable />
-        <el-table-column prop="status" label="状态" width="140" sortable>
+        <el-table-column prop="dataset_id" :label="$t('run.columns.datasetId')" width="220" sortable />
+        <el-table-column prop="status" :label="$t('common.status')" width="140" sortable>
           <template #default="{ row }">
             <el-tooltip v-if="row.status === 'failed' && row.error_message" :content="row.error_message" placement="top">
               <el-tag :type="statusType(row.status)">{{ row.status }}</el-tag>
@@ -43,29 +43,29 @@ See LICENSE for details.
             <el-tag v-else :type="statusType(row.status)">{{ row.status }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="时间预算(分钟)" sortable>
+        <el-table-column :label="$t('run.columns.timeBudget')" sortable>
           <template #default="{ row }">
-            {{ row.time_budget_minutes ?? '无限制' }}
+            {{ row.time_budget_minutes ?? $t('common.unlimited') }}
           </template>
         </el-table-column>
-        <el-table-column label="随机种子" sortable>
+        <el-table-column :label="$t('run.columns.seed')" sortable>
           <template #default="{ row }">
             {{ row.config?.seed ?? '-' }}
           </template>
         </el-table-column>
-        <el-table-column prop="primary_metric" label="评估指标" sortable />
-        <el-table-column prop="created_at" label="创建时间" sortable>
+        <el-table-column prop="primary_metric" :label="$t('run.columns.metric')" sortable />
+        <el-table-column prop="created_at" :label="$t('common.createdAt')" sortable>
           <template #default="{ row }">
             {{ formatDate(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150">
+        <el-table-column :label="$t('common.actions')" width="150">
           <template #default="{ row }">
-            <el-button size="small" type="danger" @click="deleteRun(row)">删除</el-button>
+            <el-button size="small" type="danger" @click="deleteRun(row)">{{ $t('common.delete') }}</el-button>
           </template>
         </el-table-column>
         <template #empty>
-          <el-empty description="暂无训练任务" />
+          <el-empty :description="$t('run.empty')" />
         </template>
       </el-table>
 
@@ -80,14 +80,14 @@ See LICENSE for details.
     </el-card>
 
     <!-- 新建训练任务对话框 -->
-    <el-dialog v-model="showCreateDialog" title="新建训练任务" width="520px">
+    <el-dialog v-model="showCreateDialog" :title="$t('run.newDialog.title')" width="520px">
       <el-form ref="datasetFormRef" :model="datasetForm" :rules="datasetRules" label-width="80px" style="margin-bottom: 16px;">
-        <el-form-item label="数据集" prop="dataset_id">
-          <el-select v-model="datasetForm.dataset_id" style="width: 100%" placeholder="请选择数据集" @change="onDatasetChange">
+        <el-form-item :label="$t('run.newDialog.dataset')" prop="dataset_id">
+          <el-select v-model="datasetForm.dataset_id" style="width: 100%" :placeholder="$t('run.newDialog.datasetPlaceholder')" @change="onDatasetChange">
             <el-option
               v-for="dataset in datasets"
               :key="dataset.id"
-              :label="`${dataset.name} (${dataset.row_count}行 x ${dataset.column_count}列)`"
+              :label="$t('run.newDialog.datasetOption', { name: dataset.name, rows: dataset.row_count, cols: dataset.column_count })"
               :value="dataset.id"
             />
           </el-select>
@@ -109,9 +109,11 @@ import { useRouter } from 'vue-router'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { runApi, datasetApi } from '@/api'
+import { useI18n } from 'vue-i18n'
 import TrainConfigForm from '@/components/TrainConfigForm.vue'
 
 const router = useRouter()
+const { t } = useI18n()
 const runs = ref([])
 const datasets = ref([])
 const loading = ref(false)
@@ -122,7 +124,7 @@ let timer = null
 const datasetFormRef = ref(null)
 const datasetForm = ref({ dataset_id: '' })
 const datasetRules = {
-  dataset_id: [{ required: true, message: '请选择数据集', trigger: 'change' }],
+  dataset_id: [{ required: true, message: t('run.validation.datasetRequired'), trigger: 'change' }],
 }
 const selectedDataset = computed(() => {
   return datasets.value.find((d) => d.id === datasetForm.value.dataset_id) || null
@@ -166,7 +168,7 @@ const fetchRuns = async () => {
     const res = await runApi.list()
     runs.value = res.data
   } catch (error) {
-    ElMessage.error('获取任务失败: ' + error.message)
+    ElMessage.error(t('run.errors.fetchFailed', { msg: error.message }))
   } finally {
     loading.value = false
   }
@@ -177,7 +179,7 @@ const fetchDatasets = async () => {
     const res = await datasetApi.list()
     datasets.value = res.data
   } catch (error) {
-    ElMessage.error('获取数据集失败: ' + error.message)
+    ElMessage.error(t('run.errors.datasetsFailed', { msg: error.message }))
   }
 }
 
@@ -185,14 +187,14 @@ const submitCreate = async (payload) => {
   const valid = await datasetFormRef.value?.validate().catch(() => false)
   if (!valid) return
   if (!payload.target_column) {
-    ElMessage.warning('请选择目标列')
+    ElMessage.warning(t('trainForm.validation.targetRequired'))
     return
   }
 
   creating.value = true
   try {
     const res = await runApi.create(payload)
-    ElMessage.success(payload.mode === 'step' ? 'Pipeline 草稿已创建' : '训练任务已创建')
+    ElMessage.success(payload.mode === 'step' ? t('run.pipelineCreated') : t('run.created'))
     showCreateDialog.value = false
     datasetForm.value.dataset_id = ''
     if (payload.mode === 'step') {
@@ -201,7 +203,7 @@ const submitCreate = async (payload) => {
       router.push(`/runs/${res.data.id}`)
     }
   } catch (error) {
-    ElMessage.error('创建训练任务失败: ' + error.message)
+    ElMessage.error(t('run.errors.createFailed', { msg: error.message }))
   } finally {
     creating.value = false
   }
@@ -213,13 +215,13 @@ const viewDetail = (row) => {
 
 const deleteRun = async (row) => {
   try {
-    await ElMessageBox.confirm('确定删除该训练任务吗？', '提示', { type: 'warning', confirmButtonText: '确定', cancelButtonText: '取消' })
+    await ElMessageBox.confirm(t('run.deleteConfirm'), t('messageBox.title'), { type: 'warning', confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel') })
     await runApi.delete(row.id)
-    ElMessage.success('删除成功')
+    ElMessage.success(t('common.success'))
     await fetchRuns()
   } catch (error) {
     if (error !== 'cancel') {
-      ElMessage.error('删除失败: ' + error.message)
+      ElMessage.error(t('run.errors.deleteFailed', { msg: error.message }))
     }
   }
 }

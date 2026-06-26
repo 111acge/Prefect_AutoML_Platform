@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 from config import (
     HIGH_CARDINALITY_CLASS_THRESHOLD,
 )
+from i18n import _
 
 
 @dataclass
@@ -80,28 +81,28 @@ def build_strategy(
         data_size_label = "medium"
     else:
         data_size_label = "large"
-    rationale.append(f"数据规模: {data_size_label} ({n_samples} 样本, {n_features} 特征)")
+    rationale.append(_("strategy.data_scale", label=data_size_label, samples=n_samples, features=n_features))
 
     # 2. 选择 preset
     preset = user_preset
     if preset in (None, "", "auto"):
         if data_size_label == "large" or n_features > 500 or memory_mb > 2048:
             preset = "medium_quality"
-            rationale.append("大数据/高维场景，使用 medium_quality 控制训练时间")
+            rationale.append(_("strategy.large_data_medium_quality"))
         elif data_size_label == "small":
             # 小数据集也启用 best_quality，展示完整、先进的模型空间；
             # AutoGluon 内部会根据数据量自动调节，实际并不会无限制堆叠。
             preset = "best_quality"
-            rationale.append("小数据集使用 best_quality，展示完整模型空间")
+            rationale.append(_("strategy.small_data_best_quality"))
         else:
             preset = "best_quality"
-            rationale.append("中等规模数据使用 best_quality")
+            rationale.append(_("strategy.medium_data_best_quality"))
 
     # 3. 时间预算（秒）
     if user_time_budget_minutes is None:
         # None 表示不限制训练时间（无穷大）
         time_limit_seconds = None
-        rationale.append("训练时间: 无限制")
+        rationale.append(_("strategy.time_unlimited"))
     else:
         user_time_seconds = max(user_time_budget_minutes, 0.5) * 60
         if data_size_label == "small":
@@ -113,19 +114,19 @@ def build_strategy(
             time_limit_seconds = int(user_time_seconds)
         # 至少给 30 秒，避免 fit 失败
         time_limit_seconds = max(time_limit_seconds, 30)
-        rationale.append(f"训练时间限制: {time_limit_seconds}s")
+        rationale.append(_("strategy.time_limited", seconds=time_limit_seconds))
 
     # 4. 模型复杂度（stacking / bagging）
     if user_max_models is not None:
         max_models = user_max_models
-        rationale.append(f"使用用户指定 max_models={max_models}")
+        rationale.append(_("strategy.user_max_models", max_models=max_models))
     elif data_size_label == "small":
         # 小数据集展示完整模型空间，仍保持可控数量
         max_models = 25
-        rationale.append("小数据集使用 25 个模型，展示完整模型空间")
+        rationale.append(_("strategy.small_data_25_models"))
     elif data_size_label == "large":
         max_models = 50
-        rationale.append("大数据集使用更多模型提升泛化")
+        rationale.append(_("strategy.large_data_more_models"))
     else:
         max_models = 25
 
@@ -134,24 +135,24 @@ def build_strategy(
         auto_stack = True
         num_bag_folds = 3
         num_stack_levels = 1
-        rationale.append("小数据集启用轻量 stacking/bagging")
+        rationale.append(_("strategy.small_data_stacking"))
     elif data_size_label == "large":
         # 大数据集禁用 stacking/bagging，避免 CatBoost/LightGBM 大模型 OOM 与卡死
         auto_stack = False
         num_bag_folds = 0
         num_stack_levels = 0
-        rationale.append("大数据集禁用 stacking/bagging，降低内存风险")
+        rationale.append(_("strategy.large_data_no_stacking"))
     else:
         auto_stack = False
         num_bag_folds = 0
         num_stack_levels = 0
-        rationale.append("中等规模使用单阶段模型")
+        rationale.append(_("strategy.medium_data_single_stage"))
 
     # 5. 评估指标
     primary_metric = user_primary_metric
     if primary_metric is None:
         primary_metric = _auto_primary_metric(task_type, target_info)
-        rationale.append(f"自动选择主评估指标: {primary_metric}")
+        rationale.append(_("strategy.auto_metric", metric=primary_metric))
 
     # 6. 样本权重（类别不平衡）
     imbalance_ratio = _imbalance_ratio(target_info)
@@ -161,7 +162,7 @@ def build_strategy(
         and imbalance_ratio > 1.5
     )
     if use_sample_weight:
-        rationale.append(f"检测到类别不平衡 (ratio={imbalance_ratio:.2f})，启用 balanced sample_weight")
+        rationale.append(_("strategy.imbalance_balanced_weight", ratio=imbalance_ratio))
         sample_weight_strategy = "balanced"
     else:
         sample_weight_strategy = "none"
@@ -178,14 +179,20 @@ def build_strategy(
             validation_strategy["holdout_frac"] = 0.1
     if validation_strategy["name"] == "cv":
         rationale.append(
-            f"验证策略: {validation_strategy['name']} "
-            f"(cv_type={validation_strategy.get('cv_type')}, "
-            f"n_folds={validation_strategy.get('n_folds')})"
+            _(
+                "strategy.validation_cv",
+                name=validation_strategy["name"],
+                cv_type=validation_strategy.get("cv_type"),
+                n_folds=validation_strategy.get("n_folds"),
+            )
         )
     else:
         rationale.append(
-            f"验证策略: {validation_strategy['name']} "
-            f"(holdout_frac={validation_strategy.get('holdout_frac', '-')})"
+            _(
+                "strategy.validation_holdout",
+                name=validation_strategy["name"],
+                holdout_frac=validation_strategy.get("holdout_frac", "-"),
+            )
         )
 
     # 8. 模型搜索空间（大数据/高基数/高类别数场景规避风险模型）
@@ -198,9 +205,18 @@ def build_strategy(
         n_classes=n_classes,
     )
     if hyperparameters is not None:
-        reason = "高基数列" if high_cardinality_columns else "高类别数" if n_classes > HIGH_CARDINALITY_CLASS_THRESHOLD else "大数据"
+        if high_cardinality_columns:
+            reason = _("strategy.reason.high_cardinality")
+        elif n_classes > HIGH_CARDINALITY_CLASS_THRESHOLD:
+            reason = _("strategy.reason.high_class_count")
+        else:
+            reason = _("strategy.reason.large_data")
         rationale.append(
-            f"模型空间: {list(hyperparameters.keys())} ({reason} 限制)"
+            _(
+                "strategy.hyperparameters",
+                models=list(hyperparameters.keys()),
+                reason=reason,
+            )
         )
 
     # 9. 预处理策略
@@ -238,11 +254,11 @@ def build_strategy(
         "enable_pca": n_features > 100 or memory_mb > 1024,
     }
     if high_missing:
-        rationale.append("存在高缺失率特征，训练后将给出缺失率报告")
+        rationale.append(_("strategy.high_missing_report"))
     if has_datetime:
-        rationale.append("检测到时间特征，将提取年月日、小时及周期特征")
+        rationale.append(_("strategy.time_features"))
     if has_text:
-        rationale.append("检测到文本特征，默认交给 AutoGluon 自动处理；可手动开启 Embedding")
+        rationale.append(_("strategy.text_features"))
 
     return TrainingStrategy(
         data_size_label=data_size_label,

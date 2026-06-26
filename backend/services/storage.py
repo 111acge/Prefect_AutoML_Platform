@@ -10,6 +10,7 @@ import aiofiles
 from fastapi import UploadFile
 
 from config import settings
+from i18n import _
 
 
 class StorageService:
@@ -41,7 +42,7 @@ class StorageService:
     async def save_upload(self, dataset_id: str, file: UploadFile) -> Path:
         """保存上传文件。"""
         if not file.filename:
-            raise ValueError("文件名不能为空")
+            raise ValueError(_("dataset.file_required"))
 
         file_path = self._get_upload_path(dataset_id, file.filename)
 

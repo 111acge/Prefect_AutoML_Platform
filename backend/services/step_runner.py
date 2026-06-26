@@ -19,6 +19,7 @@ import pandas as pd
 
 from config import settings
 from database import AsyncSessionLocal
+from i18n import _, get_locale
 from models import RunStep
 from schemas import CleaningRules
 from services.automl import AutoMLService
@@ -97,7 +98,7 @@ def _step_sequence(step_name: str) -> int:
     try:
         return STEP_ORDER.index(step_name)
     except ValueError as e:
-        raise ValueError(f"未知步骤: {step_name}") from e
+        raise ValueError(_("training.step_unknown", step=step_name)) from e
 
 
 class StepRunner:
@@ -200,7 +201,7 @@ class StepRunner:
                 continue
             if not await self._prerequisite_completed(prev_step):
                 raise RuntimeError(
-                    f"步骤 {step_name} 依赖的前置步骤 {prev_step} 尚未完成"
+                    _("training.step_dependency_missing", step=step_name, prev=prev_step)
                 )
 
     # ------------------------------------------------------------------
@@ -243,16 +244,16 @@ class StepRunner:
         if target_column is None or task_type is None:
             inferred_target, confidence = infer_target_column(df, hint=target_column)
             if inferred_target is None:
-                raise ValueError("无法自动推断目标列，请显式指定 target_column")
+                raise ValueError(_("data.cannot_infer_target"))
             if target_column is None:
                 target_column = inferred_target
-                logger.info(f"自动推断目标列: {target_column} (置信度 {confidence:.2f})")
+                logger.info(_("training.inferred_target", column=target_column, confidence=f"{confidence:.2f}"))
             if task_type is None:
                 task_type = infer_task_type(df[target_column])
-                logger.info(f"自动推断任务类型: {task_type}")
+                logger.info(_("training.inferred_task_type", task_type=task_type))
 
         if target_column not in df.columns:
-            raise ValueError(f"目标列 '{target_column}' 不存在")
+            raise ValueError(_("data.target_column_not_found", column=target_column))
 
         # 保存运行上下文（覆盖未提供的字段）
         ctx.update(
@@ -284,11 +285,11 @@ class StepRunner:
             result = await db.execute(select(Run).where(Run.id == self.run_id))
             run = result.scalar_one_or_none()
             if run is None:
-                raise ValueError(f"Run {self.run_id} 不存在")
+                raise ValueError(_("training.run_not_found", run_id=self.run_id))
             result = await db.execute(select(Dataset).where(Dataset.id == run.dataset_id))
             dataset = result.scalar_one_or_none()
             if dataset is None or not dataset.file_path:
-                raise ValueError(f"数据集不存在或缺少文件路径: {run.dataset_id}")
+                raise ValueError(_("training.dataset_missing", dataset_id=run.dataset_id))
             return dataset.file_path
 
     # ---------- analyze ----------
@@ -568,7 +569,7 @@ class StepRunner:
             leaderboard = predictor.leaderboard(silent=True)
             metrics["ensemble_validation"] = _validate_ensemble(leaderboard, None)
         except Exception as e:
-            logger.warning(f"集成验证失败: {e}")
+            logger.warning(_("training.ensemble_validation_failed", msg=e))
 
         # 训练集参考指标
         metrics["train"] = {}
@@ -599,7 +600,7 @@ class StepRunner:
                     train_performance = predictor.evaluate(eval_train_data)
                     metrics["train"] = {str(k): float(v) for k, v in train_performance.items()}
             except Exception as e:
-                logger.warning(f"训练集评估失败: {e}")
+                logger.warning(_("training.train_eval_failed", msg=e))
 
         # CV 结果
         if self.manifest.cv_results_path.exists():
@@ -697,6 +698,8 @@ class StepRunner:
             quality=quality,
             metrics_full=metrics,
             interpretation=interpretation,
+            locale=get_locale(),
+            t=_,
         )
 
         with open(self.manifest.report_path, "w", encoding="utf-8") as f:
@@ -718,12 +721,12 @@ class StepRunner:
     async def run_step(self, step_name: str) -> Dict[str, Any]:
         """执行单个步骤并返回 output_manifest。"""
         if step_name not in STEP_ORDER:
-            raise ValueError(f"未知步骤: {step_name}")
+            raise ValueError(_("step_runner.unknown_step", step=step_name))
 
         # 幂等检查
         step_record = await self._get_or_create_step(step_name)
         if step_record.status == "completed":
-            logger.info(f"步骤 {step_name} 已完成，跳过执行")
+            logger.info(_("training.step_skipped", step=step_name))
             return step_record.output_manifest or {}
 
         await self._check_prerequisites(step_name)
@@ -748,7 +751,7 @@ class StepRunner:
         }
 
         await self._update_step(step_name, "running", input_manifest=input_manifest)
-        logger.info(f"开始执行步骤: {step_name}")
+        logger.info(_("training.step_started", step=step_name))
 
         try:
             handler: Callable[[Dict[str, Any]], Any] = getattr(self, f"_run_{step_name}")
@@ -759,11 +762,11 @@ class StepRunner:
                 input_manifest=input_manifest,
                 output_manifest=output_manifest,
             )
-            logger.info(f"步骤 {step_name} 执行完成")
+            logger.info(_("training.step_completed", step=step_name))
             return output_manifest
         except Exception as e:
             error_message = str(e)
-            logger.exception(f"步骤 {step_name} 执行失败: {error_message}")
+            logger.exception(_("training.step_failed", step=step_name, msg=error_message))
             self._write_error(step_name, error_message)
             await self._update_step(
                 step_name,

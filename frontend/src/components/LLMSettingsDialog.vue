@@ -7,7 +7,7 @@ See LICENSE for details.
 <template>
   <el-dialog
     v-model="visible"
-    title="LLM API 配置"
+    :title="$t('llmSettings.title')"
     width="520px"
     :close-on-click-modal="false"
     @open="loadConfig"
@@ -24,11 +24,11 @@ See LICENSE for details.
         :closable="false"
         style="margin-bottom: 16px;"
       >
-        配置 LLM API Key 后，平台将使用大模型生成业务解读、意图解析等智能内容。未配置时将自动使用规则兜底。
+        {{ $t('llmSettings.description') }}
       </el-alert>
 
-      <el-form-item label="提供商" prop="provider">
-        <el-select v-model="form.provider" placeholder="请选择 LLM 提供商" style="width: 100%">
+      <el-form-item :label="$t('llmSettings.provider')" prop="provider">
+        <el-select v-model="form.provider" :placeholder="$t('llmSettings.providerPlaceholder')" style="width: 100%">
           <el-option
             v-for="p in supportedProviders"
             :key="p.key"
@@ -38,27 +38,27 @@ See LICENSE for details.
         </el-select>
       </el-form-item>
 
-      <el-form-item label="API Key" prop="apiKey">
+      <el-form-item :label="$t('llmSettings.apiKey')" prop="apiKey">
         <el-input
           v-model="form.apiKey"
           type="password"
           show-password
-          placeholder="请输入所选提供商的 API Key"
+          :placeholder="$t('llmSettings.apiKeyPlaceholder')"
           clearable
         />
         <div v-if="config.api_key_masked" class="key-hint">
-          当前已保存：{{ config.api_key_masked }}
+          {{ $t('llmSettings.saved', { masked: config.api_key_masked }) }}
         </div>
       </el-form-item>
 
-      <el-form-item label="模型（可选）" prop="model">
+      <el-form-item :label="$t('llmSettings.model')" prop="model">
         <el-input
           v-model="form.model"
-          placeholder="留空使用默认模型"
+          :placeholder="$t('llmSettings.modelPlaceholder')"
           clearable
         />
         <div class="model-hint">
-          默认模型：{{ defaultModel }}
+          {{ $t('llmSettings.defaultModel', { model: defaultModel }) }}
         </div>
         <div v-if="modelHint" class="model-hint deprecation-hint">
           {{ modelHint }}
@@ -67,20 +67,22 @@ See LICENSE for details.
     </el-form>
 
     <template #footer>
-      <el-button @click="visible = false">取消</el-button>
-      <el-button type="primary" :loading="saving" @click="handleSave">保存配置</el-button>
+      <el-button @click="visible = false">{{ $t('llmSettings.cancel') }}</el-button>
+      <el-button type="primary" :loading="saving" @click="handleSave">{{ $t('llmSettings.save') }}</el-button>
     </template>
   </el-dialog>
 </template>
 
 <script setup>
 import { ref, computed, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { llmSettingsApi } from '@/api'
 
 const visible = defineModel('visible', { type: Boolean, default: false })
 const emit = defineEmits(['saved'])
 
+const { t } = useI18n()
 const formRef = ref(null)
 const saving = ref(false)
 const config = ref({
@@ -91,10 +93,10 @@ const config = ref({
 })
 
 const providerOptions = {
-  kimi: { label: 'KIMI（Moonshot）', defaultModel: 'moonshot-v1-8k' },
-  deepseek: { label: 'DeepSeek', defaultModel: 'deepseek-v4-flash' },
-  minimax: { label: 'MiniMax', defaultModel: 'MiniMax-M3' },
-  glm: { label: '智谱 GLM', defaultModel: 'glm-4-flash' },
+  kimi: { defaultModel: 'moonshot-v1-8k' },
+  deepseek: { defaultModel: 'deepseek-v4-flash' },
+  minimax: { defaultModel: 'MiniMax-M3' },
+  glm: { defaultModel: 'glm-4-flash' },
 }
 
 const form = ref({
@@ -106,7 +108,7 @@ const form = ref({
 const supportedProviders = computed(() =>
   (config.value.supported_providers || []).map((key) => ({
     key,
-    label: providerOptions[key]?.label || key,
+    label: t(`llmSettings.providers.${key}`) || key,
   }))
 )
 
@@ -118,14 +120,14 @@ const defaultModel = computed(() => {
 const modelHint = computed(() => {
   const key = form.value.provider
   if (key === 'deepseek') {
-    return '推荐：deepseek-v4-flash / deepseek-v4-pro；deepseek-chat、deepseek-reasoner 将于 2026/07/24 弃用'
+    return t('llmSettings.recommendation')
   }
   return ''
 })
 
 const rules = {
-  provider: [{ required: true, message: '请选择提供商', trigger: 'change' }],
-  apiKey: [{ required: true, message: '请输入 API Key', trigger: 'blur' }],
+  provider: [{ required: true, message: t('llmSettings.validation.providerRequired'), trigger: 'change' }],
+  apiKey: [{ required: true, message: t('llmSettings.validation.apiKeyRequired'), trigger: 'blur' }],
 }
 
 watch(
@@ -150,7 +152,7 @@ const loadConfig = async () => {
     }
     form.value.apiKey = ''
   } catch (error) {
-    ElMessage.error(error.message || '加载配置失败')
+    ElMessage.error(error.message || t('llmSettings.errors.loadFailed'))
   }
 }
 
@@ -167,11 +169,11 @@ const handleSave = async () => {
     }
     const res = await llmSettingsApi.save(payload)
     config.value = res.data || {}
-    ElMessage.success('LLM 配置已保存')
+    ElMessage.success(t('llmSettings.saveSuccess'))
     emit('saved')
     visible.value = false
   } catch (error) {
-    ElMessage.error(error.message || '保存失败')
+    ElMessage.error(error.message || t('llmSettings.errors.saveFailed'))
   } finally {
     saving.value = false
   }

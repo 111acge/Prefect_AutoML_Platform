@@ -24,6 +24,7 @@ from config import (
     DEFAULT_PERM_IMPORTANCE_REPEATS_NORMAL,
     DEFAULT_PERM_IMPORTANCE_SAMPLE_SIZE,
 )
+from i18n import _
 
 logger = logging.getLogger(__name__)
 
@@ -122,27 +123,24 @@ def compute_shap_values(
     import importlib.util
 
     if not settings.shap_enabled:
-        logger.warning("SHAP 已通过配置禁用，跳过计算")
+        logger.warning(_("explainability.shap_disabled"))
         return {}
 
     if importlib.util.find_spec("shap") is None:
-        logger.warning("shap 未安装，跳过 SHAP 计算")
+        logger.warning(_("explainability.shap_not_installed_log"))
         return {}
 
     try:
         n_classes = _resolve_n_classes(predictor, data, target_column)
         effective_sample_size = _resolve_shap_sample_size(sample_size, n_classes)
         if effective_sample_size == 0:
-            logger.warning(
-                f"SHAP 根据数据特征自动跳过（n_classes={n_classes}），"
-                "可通过 SHAP_MAX_SAMPLE_SIZE 覆盖"
-            )
+            logger.warning(_("explainability.shap_auto_skip", n_classes=n_classes))
             return {}
 
         X = data.drop(columns=[target_column])
         if len(X) > effective_sample_size:
             X_sample = X.sample(n=effective_sample_size, random_state=42)
-            logger.info(f"SHAP 自动采样至 {len(X_sample)} 行（n_classes={n_classes}）")
+            logger.info(_("explainability.shap_sampled", rows=len(X_sample), n_classes=n_classes))
         else:
             X_sample = X
         feature_names = X_sample.columns.tolist()
@@ -172,13 +170,13 @@ def compute_shap_values(
             .sort_values(ascending=False)
         )
 
-        logger.info(f"SHAP 计算完成，保存到 {shap_path}")
+        logger.info(_("explainability.shap_done", path=shap_path))
         return {
             "shap_path": str(shap_path),
             "top_features": mean_abs_shap.head(10).to_dict(),
         }
     except Exception as e:
-        logger.warning(f"SHAP 计算失败: {e}")
+        logger.warning(_("explainability.shap_failed", msg=e))
         return {}
 
 
@@ -209,20 +207,14 @@ def compute_permutation_importance(
             n_rows=len(data),
         )
         if resolved is None:
-            logger.warning(
-                f"Permutation Importance 根据数据特征自动跳过（n_classes={n_classes}），"
-                "可通过 PERMUTATION_IMPORTANCE_MAX_REPEATS 覆盖"
-            )
+            logger.warning(_("explainability.perm_auto_skip", n_classes=n_classes))
             return {}
 
         effective_n_repeats, effective_sample_size = resolved
         eval_data = data
         if effective_sample_size is not None and len(data) > effective_sample_size:
             eval_data = data.sample(n=effective_sample_size, random_state=random_state)
-            logger.info(
-                f"Permutation Importance 自动采样至 {len(eval_data)} 行"
-                f"（n_classes={n_classes}, n_repeats={effective_n_repeats}）"
-            )
+            logger.info(_("explainability.perm_sampled", rows=len(eval_data), n_classes=n_classes, n_repeats=effective_n_repeats))
 
         def _score(df: pd.DataFrame) -> float:
             perf = predictor.evaluate(df)
@@ -237,7 +229,7 @@ def compute_permutation_importance(
         records = []
         for col in feature_cols:
             drops = []
-            for _ in range(effective_n_repeats):
+            for _i in range(effective_n_repeats):
                 permuted = eval_data.copy()
                 permuted[col] = rng.permutation(permuted[col].values)
                 permuted_score = _score(permuted)
@@ -259,7 +251,7 @@ def compute_permutation_importance(
             "top_features": importance_df.head(10).set_index("feature").to_dict()["importance_mean"],
         }
     except Exception as e:
-        logger.warning(f"Permutation Importance 计算失败: {e}")
+        logger.warning(_("explainability.perm_failed", msg=e))
         return {}
 
 
@@ -275,12 +267,12 @@ def explain_single_sample(
     import importlib.util
 
     if importlib.util.find_spec("shap") is None:
-        raise RuntimeError("shap 未安装，无法生成解释")
+        raise RuntimeError(_("explainability.shap_not_installed"))
 
     import shap
 
     if len(X) != 1:
-        raise ValueError("explain_single_sample 只支持单条样本")
+        raise ValueError(_("explainability.single_sample_only"))
 
     feature_names = X.columns.tolist()
     problem_type = predictor.problem_type
@@ -376,7 +368,7 @@ def _normalize_shap_matrix(shap_values: Any, X_sample: pd.DataFrame) -> np.ndarr
             arr = class_values.values if isinstance(class_values, pd.DataFrame) else class_values
             arrays.append(np.asarray(arr))
         return np.mean(np.abs(np.stack(arrays, axis=-1)), axis=-1)
-    raise ValueError(f"不支持的 SHAP 值类型: {type(shap_values)}")
+    raise ValueError(_("explainability.unsupported_shap_type", type=type(shap_values)))
 
 
 def _encode_for_shap(data: pd.DataFrame) -> tuple[pd.DataFrame, Dict[str, Any]]:

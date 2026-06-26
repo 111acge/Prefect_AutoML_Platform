@@ -10,15 +10,15 @@ See LICENSE for details.
       <el-col :span="24">
         <el-card class="welcome-card">
           <h1>Prefect AutoML Platform</h1>
-          <p class="subtitle">端到端全自动机器学习平台</p>
-          <p>基于 Prefect 工作流编排 + AutoGluon 模型内核，实现数据上传、自动训练、评估与预测。</p>
+          <p class="subtitle">{{ $t('home.subtitle') }}</p>
+          <p>{{ $t('home.description') }}</p>
           <div class="welcome-actions">
             <el-button type="primary" size="large" @click="$router.push('/datasets')">
-              开始上传数据
+              {{ $t('home.uploadData') }}
             </el-button>
-            <el-button size="large" @click="$router.push('/datasets')">查看数据集</el-button>
-            <el-button size="large" @click="$router.push('/runs')">查看训练任务</el-button>
-            <el-button size="large" @click="$router.push('/compare')">模型对比</el-button>
+            <el-button size="large" @click="$router.push('/datasets')">{{ $t('home.viewDatasets') }}</el-button>
+            <el-button size="large" @click="$router.push('/runs')">{{ $t('home.viewRuns') }}</el-button>
+            <el-button size="large" @click="$router.push('/compare')">{{ $t('home.compareModels') }}</el-button>
           </div>
         </el-card>
       </el-col>
@@ -30,10 +30,10 @@ See LICENSE for details.
           <template #header>
             <div class="card-header">
               <el-icon><component :is="Upload" /></el-icon>
-              <span>数据接入</span>
+              <span>{{ $t('home.dataAccess.title') }}</span>
             </div>
           </template>
-          <p>支持 CSV / Excel / Parquet 文件上传，自动推断 Schema 与字段类型。</p>
+          <p>{{ $t('home.dataAccess.desc') }}</p>
         </el-card>
       </el-col>
       <el-col :span="8">
@@ -41,10 +41,10 @@ See LICENSE for details.
           <template #header>
             <div class="card-header">
               <el-icon><component :is="Cpu" /></el-icon>
-              <span>自动训练</span>
+              <span>{{ $t('home.autoTrain.title') }}</span>
             </div>
           </template>
-          <p>Prefect 编排全流程，AutoGluon 自动搜索最优模型并集成。</p>
+          <p>{{ $t('home.autoTrain.desc') }}</p>
         </el-card>
       </el-col>
       <el-col :span="8">
@@ -52,28 +52,28 @@ See LICENSE for details.
           <template #header>
             <div class="card-header">
               <el-icon><component :is="TrendCharts" /></el-icon>
-              <span>结果分析</span>
+              <span>{{ $t('home.resultAnalysis.title') }}</span>
             </div>
           </template>
-          <p>查看评估指标、模型排行榜、特征重要性与 SHAP 可解释性报告。</p>
+          <p>{{ $t('home.resultAnalysis.desc') }}</p>
         </el-card>
       </el-col>
     </el-row>
 
     <el-row :gutter="20" class="guide-row">
       <el-col :span="24">
-        <h2 class="guide-title">快速开始</h2>
+        <h2 class="guide-title">{{ $t('home.quickStart') }}</h2>
       </el-col>
       <el-col :span="8">
         <el-card>
           <template #header>
             <div class="card-header">
               <el-icon><component :is="Upload" /></el-icon>
-              <span>1. 上传数据</span>
+              <span>{{ $t('home.step1') }}</span>
             </div>
           </template>
-          <p>进入数据集页面，上传 CSV / Excel / Parquet 文件，系统自动推断 Schema 和目标列。</p>
-          <el-button type="primary" text @click="$router.push('/datasets')">去上传</el-button>
+          <p>{{ $t('home.step1Desc') }}</p>
+          <el-button type="primary" text @click="$router.push('/datasets')">{{ $t('home.goUpload') }}</el-button>
         </el-card>
       </el-col>
       <el-col :span="8">
@@ -81,11 +81,11 @@ See LICENSE for details.
           <template #header>
             <div class="card-header">
               <el-icon><component :is="Cpu" /></el-icon>
-              <span>2. 启动训练</span>
+              <span>{{ $t('home.step2') }}</span>
             </div>
           </template>
-          <p>选择数据集和目标列，设置时间预算，一键启动 AutoML 训练，Prefect 编排全流程。</p>
-          <el-button type="primary" text @click="$router.push('/runs')">去训练</el-button>
+          <p>{{ $t('home.step2Desc') }}</p>
+          <el-button type="primary" text @click="$router.push('/runs')">{{ $t('home.goTrain') }}</el-button>
         </el-card>
       </el-col>
       <el-col :span="8">
@@ -93,11 +93,11 @@ See LICENSE for details.
           <template #header>
             <div class="card-header">
               <el-icon><component :is="TrendCharts" /></el-icon>
-              <span>3. 查看结果</span>
+              <span>{{ $t('home.step3') }}</span>
             </div>
           </template>
-          <p>训练完成后查看指标、排行榜、特征重要性和报告，并下载模型进行预测。</p>
-          <el-button type="primary" text @click="$router.push('/compare')">去对比</el-button>
+          <p>{{ $t('home.step3Desc') }}</p>
+          <el-button type="primary" text @click="$router.push('/compare')">{{ $t('home.goCompare') }}</el-button>
         </el-card>
       </el-col>
     </el-row>
@@ -105,7 +105,10 @@ See LICENSE for details.
 </template>
 
 <script setup>
+import { useI18n } from 'vue-i18n'
 import { Upload, Cpu, TrendCharts } from '@element-plus/icons-vue'
+
+const { t } = useI18n()
 </script>
 
 <style scoped>

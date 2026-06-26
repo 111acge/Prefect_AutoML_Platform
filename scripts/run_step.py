@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.join(project_root, "backend"))
 # 必须在导入 prefect 前设置
 os.environ.setdefault("PREFECT_API_URL", "")
 
+from i18n import set_locale  # noqa: E402
 from services.llm_settings_service import load_llm_config  # noqa: E402
 from services.step_runner import StepRunner, STEP_ORDER  # noqa: E402
 
@@ -42,6 +43,9 @@ def _write_error(output_dir: str, step_name: str, exc: Exception) -> dict:
 
 
 async def main_async():
+    # 同步父进程传递的语言设置
+    set_locale(os.environ.get("APP_LOCALE", "zh-CN"))
+
     import argparse
 
     parser = argparse.ArgumentParser(description="Run a single AutoML step")

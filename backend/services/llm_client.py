@@ -20,6 +20,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from config import settings
+from i18n import _
 from services.llm_settings_service import (
     get_active_api_key as _get_dynamic_api_key,
     get_active_model as _get_dynamic_model,
@@ -93,11 +94,11 @@ def resolve_providers(provider: str = "auto") -> List[str]:
     if provider and provider.lower() != "auto":
         prov = provider.lower()
         if prov not in PROVIDER_CONFIG:
-            logger.warning("未知 LLM 提供商: %s，将尝试 auto", prov)
+            logger.warning(_("llm.unknown_provider_log", provider=prov))
         elif _get_api_key(prov):
             return [prov]
         else:
-            logger.warning("LLM 提供商 %s 未配置 API 密钥", prov)
+            logger.warning(_("llm.provider_not_configured_log", provider=prov))
 
     order = ["kimi", "deepseek", "minimax", "glm", "openai"]
     return [p for p in order if _get_api_key(p)]
@@ -130,12 +131,12 @@ async def call_provider(
 ) -> str:
     """调用指定 OpenAI 兼容端点并返回原始文本。"""
     if not _OPENAI_AVAILABLE:
-        raise RuntimeError("openai 库未安装")
+        raise RuntimeError(_("llm.openai_not_installed"))
 
     cfg = PROVIDER_CONFIG[provider]
     api_key = _get_api_key(provider)
     if not api_key:
-        raise RuntimeError(f"未配置 {provider} API 密钥")
+        raise RuntimeError(_("llm.provider_not_configured", provider=provider))
 
     client_kwargs: Dict[str, Any] = {"api_key": api_key}
     if cfg.get("base_url"):
@@ -179,11 +180,11 @@ async def call_llm_for_json(
     若一个提供商失败，自动尝试下一个；解析失败时会重试同一提供商。
     """
     if not _OPENAI_AVAILABLE:
-        raise RuntimeError("openai 库未安装")
+        raise RuntimeError(_("llm.openai_not_installed"))
 
     providers = resolve_providers(provider)
     if not providers:
-        raise RuntimeError("未配置任何 LLM API 密钥")
+        raise RuntimeError(_("llm.no_provider_configured"))
 
     last_error: Optional[Exception] = None
     for prov in providers:
@@ -198,14 +199,14 @@ async def call_llm_for_json(
                 )
                 json_str = _extract_json(raw)
                 if json_str is None:
-                    raise ValueError(f"无法从 LLM 输出中提取 JSON: {raw[:200]}")
+                    raise ValueError(_("llm.json_extraction_failed", raw=raw[:200]))
                 return json.loads(json_str)
             except Exception as e:  # noqa: BLE001
                 last_error = e
                 logger.warning(
-                    "LLM 调用/解析失败 (provider=%s, attempt=%d): %s", prov, attempt + 1, e
+                    _("llm.call_parse_failed", prov=prov, attempt=attempt + 1, msg=e)
                 )
                 if attempt < retries:
                     await asyncio.sleep(1.0 * (attempt + 1))
 
-    raise RuntimeError(f"所有 LLM 提供商均失败，最后错误: {last_error}")
+    raise RuntimeError(_("llm.all_providers_failed", last_error=last_error))

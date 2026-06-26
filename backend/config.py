@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # Prefect
     prefect_home: Path = project_root / ".prefect"
 
+    # 国际化默认语言
+    default_locale: str = "zh-CN"  # zh-CN / en
+
     # LLM 意图解析（可选，失败自动降级）
     llm_provider: str = "auto"  # auto / kimi / deepseek / minimax / glm / openai
     kimi_api_key: Optional[str] = None

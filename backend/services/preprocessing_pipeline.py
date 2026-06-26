@@ -14,6 +14,7 @@ import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 
 from services.feature_engineering import FeatureEngineer
+from i18n import _
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +190,7 @@ class DataPreprocessor(BaseEstimator, TransformerMixin):
         else:
             self.feature_engineer = None
             transformed_sample = self._base_transform(df)
-            logger.info("高级特征工程已关闭")
+            logger.info(_("preprocessing.advanced_fe_disabled"))
 
         # 记录最终特征列（用于预测校验）
         self.feature_columns = [c for c in transformed_sample.columns if c != self.target_column]
@@ -198,9 +199,13 @@ class DataPreprocessor(BaseEstimator, TransformerMixin):
         }
 
         logger.info(
-            f"预处理器拟合完成: 数值列={len(numeric_cols)}, "
-            f"类别列={len(categorical_cols)}, 对数变换列={self.log_transform_cols}, "
-            f"最终特征数={len(self.feature_columns)}"
+            _(
+                "preprocessing.fitted",
+                numeric=len(numeric_cols),
+                categorical=len(categorical_cols),
+                log_cols=self.log_transform_cols,
+                features=len(self.feature_columns),
+            )
         )
         return self
 
@@ -211,7 +216,7 @@ class DataPreprocessor(BaseEstimator, TransformerMixin):
         # 检查必需列
         missing_cols = set(self.feature_columns) - set(X.columns)
         if missing_cols:
-            errors.append(f"缺少特征列: {sorted(missing_cols)}")
+            errors.append(_("preprocessing.missing_columns", columns=sorted(missing_cols)))
 
         # 检查数据类型
         for col, expected_dtype in self.feature_dtypes.items():
@@ -222,9 +227,9 @@ class DataPreprocessor(BaseEstimator, TransformerMixin):
             is_expected_numeric = expected_dtype.startswith(("int", "float"))
             is_actual_numeric = actual_dtype.startswith(("int", "float"))
             if is_expected_numeric and not is_actual_numeric:
-                errors.append(f"列 '{col}' 期望数值类型，实际为 {actual_dtype}")
+                errors.append(_("preprocessing.numeric_expected", column=col, actual=actual_dtype))
             elif not is_expected_numeric and is_actual_numeric:
-                errors.append(f"列 '{col}' 期望类别类型，实际为 {actual_dtype}")
+                errors.append(_("preprocessing.categorical_expected", column=col, actual=actual_dtype))
 
         return errors
 
@@ -244,13 +249,13 @@ class DataPreprocessor(BaseEstimator, TransformerMixin):
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump(self, path)
-        logger.info(f"预处理器已保存: {path}")
+        logger.info(_("preprocessing.saved", path=path))
 
     @classmethod
     def load(cls, path: Path) -> "DataPreprocessor":
         """从文件加载。"""
         preprocessor = joblib.load(path)
-        logger.info(f"预处理器已加载: {path}")
+        logger.info(_("preprocessing.loaded", path=path))
         return preprocessor
 
 

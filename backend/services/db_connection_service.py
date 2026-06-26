@@ -12,6 +12,8 @@ from typing import Any, Dict
 
 import pandas as pd
 
+from i18n import _
+
 
 def load_from_sql(
     connection_type: str,
@@ -39,13 +41,13 @@ def load_from_sql(
     if connection_type == "clickhouse":
         return _load_clickhouse(connection_params, query)
 
-    raise ValueError(f"不支持的数据库类型: {connection_type}")
+    raise ValueError(_("db.unsupported_type", type=connection_type))
 
 
 def _load_sqlite(connection_params: Dict[str, Any], query: str) -> pd.DataFrame:
     file_path = connection_params.get("file_path")
     if not file_path:
-        raise ValueError("SQLite 连接需要提供 file_path")
+        raise ValueError(_("db.sqlite_requires_path"))
     from sqlalchemy import create_engine
 
     engine = create_engine(f"sqlite:///{file_path}")
@@ -65,7 +67,7 @@ def _load_with_sqlalchemy(
     try:
         from sqlalchemy import create_engine
     except ImportError as e:
-        raise RuntimeError("SQLAlchemy 未安装") from e
+        raise RuntimeError(_("db.sqlalchemy_not_installed")) from e
 
     host = connection_params.get("host", "localhost")
     port = connection_params.get("port")
@@ -77,16 +79,12 @@ def _load_with_sqlalchemy(
         try:
             import pymysql  # noqa: F401
         except ImportError as e:
-            raise RuntimeError(
-                "MySQL 驱动未安装，请运行: uv pip install pymysql"
-            ) from e
+            raise RuntimeError(_("db.mysql_driver_missing")) from e
     elif dialect == "postgresql+psycopg2":
         try:
             import psycopg2  # noqa: F401
         except ImportError as e:
-            raise RuntimeError(
-                "PostgreSQL 驱动未安装，请运行: uv pip install psycopg2-binary"
-            ) from e
+            raise RuntimeError(_("db.postgres_driver_missing")) from e
 
     url = f"{dialect}://{username}:{password}@{host}:{port}/{database}"
     engine = create_engine(url)
@@ -102,9 +100,7 @@ def _load_clickhouse(connection_params: Dict[str, Any], query: str) -> pd.DataFr
     try:
         import clickhouse_connect
     except ImportError as e:
-        raise RuntimeError(
-            "ClickHouse 驱动未安装，请运行: uv pip install clickhouse-connect"
-        ) from e
+        raise RuntimeError(_("db.clickhouse_driver_missing")) from e
 
     host = connection_params.get("host", "localhost")
     port = connection_params.get("port", 8123)

@@ -9,13 +9,13 @@ See LICENSE for details.
     <el-card>
       <template #header>
         <div class="card-header">
-          <span>数据集管理</span>
+          <span>{{ $t('dataset.title') }}</span>
           <div>
             <el-button type="success" @click="trainDefaultDataset" :loading="trainingDefault">
-              <el-icon><component :is="Cpu" /></el-icon> 使用默认数据集训练
+              <el-icon><component :is="Cpu" /></el-icon> {{ $t('dataset.useDefault') }}
             </el-button>
             <el-button type="primary" @click="showUploadDialog = true">
-              <el-icon><component :is="Upload" /></el-icon> 上传数据集
+              <el-icon><component :is="Upload" /></el-icon> {{ $t('dataset.upload') }}
             </el-button>
           </div>
         </div>
@@ -24,7 +24,7 @@ See LICENSE for details.
       <div class="table-toolbar">
         <el-input
           v-model="searchQuery"
-          placeholder="搜索数据集名称"
+          :placeholder="$t('dataset.searchPlaceholder')"
           style="width: 260px"
           clearable
         />
@@ -33,7 +33,7 @@ See LICENSE for details.
           :disabled="selectedDatasets.length === 0"
           @click="batchDeleteDatasets"
         >
-          批量删除 ({{ selectedDatasets.length }})
+          {{ $t('dataset.batchDelete', { count: selectedDatasets.length }) }}
         </el-button>
       </div>
 
@@ -44,31 +44,31 @@ See LICENSE for details.
         @selection-change="handleSelectionChange"
       >
         <el-table-column type="selection" width="55" />
-        <el-table-column prop="name" label="名称" sortable />
-        <el-table-column prop="row_count" label="行数" sortable />
-        <el-table-column prop="column_count" label="列数" sortable />
-        <el-table-column prop="file_size_bytes" label="大小" sortable>
+        <el-table-column prop="name" :label="$t('dataset.columns.name')" sortable />
+        <el-table-column prop="row_count" :label="$t('dataset.columns.rows')" sortable />
+        <el-table-column prop="column_count" :label="$t('dataset.columns.cols')" sortable />
+        <el-table-column prop="file_size_bytes" :label="$t('dataset.columns.size')" sortable>
           <template #default="{ row }">
             {{ formatSize(row.file_size_bytes) }}
           </template>
         </el-table-column>
-        <el-table-column prop="created_at" label="创建时间" sortable>
+        <el-table-column prop="created_at" :label="$t('dataset.columns.createdAt')" sortable>
           <template #default="{ row }">
             {{ formatDate(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="320">
+        <el-table-column :label="$t('dataset.columns.actions')" width="320">
           <template #default="{ row }">
-            <el-button size="small" @click="previewDataset(row)">预览</el-button>
-            <el-tooltip content="数据质量检测报告">
-              <el-button size="small" type="info" @click="showQuality(row)">质量报告</el-button>
+            <el-button size="small" @click="previewDataset(row)">{{ $t('common.preview') }}</el-button>
+            <el-tooltip :content="$t('dataset.qualityReport')">
+              <el-button size="small" type="info" @click="showQuality(row)">{{ $t('dataset.qualityReport') }}</el-button>
             </el-tooltip>
-            <el-button size="small" type="primary" @click="startTraining(row)">训练</el-button>
-            <el-button size="small" type="danger" @click="deleteDataset(row)">删除</el-button>
+            <el-button size="small" type="primary" @click="startTraining(row)">{{ $t('common.train') }}</el-button>
+            <el-button size="small" type="danger" @click="deleteDataset(row)">{{ $t('common.delete') }}</el-button>
           </template>
         </el-table-column>
         <template #empty>
-          <el-empty description="暂无数据集，请先上传" />
+          <el-empty :description="$t('dataset.empty')" />
         </template>
       </el-table>
 
@@ -83,12 +83,12 @@ See LICENSE for details.
     </el-card>
 
     <!-- 上传对话框 -->
-    <el-dialog v-model="showUploadDialog" title="上传数据集" width="500px">
+    <el-dialog v-model="showUploadDialog" :title="$t('dataset.uploadDialog.title')" width="500px">
       <el-form :model="uploadForm" label-width="80px">
-        <el-form-item label="名称">
-          <el-input v-model="uploadForm.name" placeholder="数据集名称" />
+        <el-form-item :label="$t('dataset.uploadDialog.name')">
+          <el-input v-model="uploadForm.name" :placeholder="$t('dataset.uploadDialog.namePlaceholder')" />
         </el-form-item>
-        <el-form-item label="文件">
+        <el-form-item :label="$t('dataset.uploadDialog.file')">
           <el-upload
             ref="uploadRef"
             :auto-upload="false"
@@ -96,18 +96,18 @@ See LICENSE for details.
             :limit="1"
             accept=".csv,.xlsx,.xls,.parquet,.jsonl,.json"
           >
-            <el-button type="primary">选择文件</el-button>
+            <el-button type="primary">{{ $t('dataset.uploadDialog.selectFile') }}</el-button>
           </el-upload>
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="showUploadDialog = false">取消</el-button>
-        <el-button type="primary" @click="submitUpload" :loading="uploading">上传</el-button>
+        <el-button @click="showUploadDialog = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="submitUpload" :loading="uploading">{{ $t('common.upload') }}</el-button>
       </template>
     </el-dialog>
 
     <!-- 训练对话框 -->
-    <el-dialog v-model="showTrainDialog" title="启动训练任务" width="520px">
+    <el-dialog v-model="showTrainDialog" :title="$t('run.newDialog.title')" width="520px">
       <TrainConfigForm
         :dataset="currentDataset"
         :loading="training"
@@ -117,7 +117,7 @@ See LICENSE for details.
     </el-dialog>
 
     <!-- 预览对话框 -->
-    <el-dialog v-model="showPreviewDialog" title="数据预览" width="800px">
+    <el-dialog v-model="showPreviewDialog" :title="$t('dataset.preview')" width="800px">
       <el-table :data="previewRows" style="width: 100%" max-height="400px">
         <el-table-column
           v-for="(col, index) in previewData.columns"
@@ -129,28 +129,28 @@ See LICENSE for details.
     </el-dialog>
 
     <!-- 质量报告对话框 -->
-    <el-dialog v-model="showQualityDialog" title="数据质量报告" width="900px">
+    <el-dialog v-model="showQualityDialog" :title="$t('dataset.quality.title')" width="900px">
       <div v-if="qualityData" v-loading="qualityLoading">
         <el-row :gutter="20" class="quality-summary">
           <el-col :span="6">
-            <div class="quality-stat">综合得分</div>
+            <div class="quality-stat">{{ $t('dataset.quality.overallScore') }}</div>
             <div class="quality-stat-value">{{ (qualityData.overall_score * 100).toFixed(2) }}%</div>
           </el-col>
           <el-col :span="6">
-            <div class="quality-stat">样本数</div>
+            <div class="quality-stat">{{ $t('dataset.quality.samples') }}</div>
             <div class="quality-stat-value">{{ qualityData.n_rows }}</div>
           </el-col>
           <el-col :span="6">
-            <div class="quality-stat">特征数</div>
+            <div class="quality-stat">{{ $t('dataset.quality.features') }}</div>
             <div class="quality-stat-value">{{ qualityData.n_features }}</div>
           </el-col>
           <el-col :span="6">
-            <div class="quality-stat">含缺失值行数</div>
+            <div class="quality-stat">{{ $t('dataset.quality.rowsWithMissing') }}</div>
             <div class="quality-stat-value">{{ qualityData.completeness?.rows_with_missing || 0 }}</div>
           </el-col>
         </el-row>
 
-        <h3 class="quality-title">质量维度得分</h3>
+        <h3 class="quality-title">{{ $t('dataset.quality.dimensionScores') }}</h3>
         <el-row :gutter="20">
           <el-col :span="4" v-for="dim in dimensionList" :key="dim.key">
             <el-card shadow="hover" class="dim-card">
@@ -169,20 +169,20 @@ See LICENSE for details.
           style="margin-top: 10px;"
         />
 
-        <h3 class="quality-title">缺失率分布</h3>
+        <h3 class="quality-title">{{ $t('dataset.quality.missingRate') }}</h3>
         <EChart :option="missingRateOption" height="280px" />
 
-        <h3 class="quality-title">目标列分布</h3>
+        <h3 class="quality-title">{{ $t('dataset.quality.targetDistribution') }}</h3>
         <EChart v-if="targetDistributionOption" :option="targetDistributionOption" height="300px" />
-        <el-empty v-else description="目标列非类别类型，未返回分布" />
+        <el-empty v-else :description="$t('dataset.quality.targetNonCategorical')" />
 
-        <h3 class="quality-title">异常值概览</h3>
+        <h3 class="quality-title">{{ $t('dataset.quality.outlierOverview') }}</h3>
         <EChart :option="outlierOption" height="280px" />
 
         <el-row :gutter="20" style="margin-top: 20px;">
           <el-col :span="8">
             <el-card shadow="hover">
-              <div class="quality-stat">常量/零方差列</div>
+              <div class="quality-stat">{{ $t('dataset.quality.constantColumns') }}</div>
               <div class="quality-stat-value">
                 {{ (qualityData.consistency?.constant_columns || []).length }}
               </div>
@@ -190,7 +190,7 @@ See LICENSE for details.
           </el-col>
           <el-col :span="8">
             <el-card shadow="hover">
-              <div class="quality-stat">疑似 ID 列</div>
+              <div class="quality-stat">{{ $t('dataset.quality.idLikeColumns') }}</div>
               <div class="quality-stat-value">
                 {{ (qualityData.uniqueness?.id_like_columns || []).length }}
               </div>
@@ -198,7 +198,7 @@ See LICENSE for details.
           </el-col>
           <el-col :span="8">
             <el-card shadow="hover">
-              <div class="quality-stat">重复行</div>
+              <div class="quality-stat">{{ $t('dataset.quality.duplicateRows') }}</div>
               <div class="quality-stat-value">
                 {{ qualityData.uniqueness?.duplicated_rows || 0 }}
               </div>
@@ -213,6 +213,7 @@ See LICENSE for details.
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { Upload, Cpu } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { datasetApi, runApi } from '@/api'
@@ -220,6 +221,7 @@ import EChart from '@/components/EChart.vue'
 import TrainConfigForm from '@/components/TrainConfigForm.vue'
 
 const router = useRouter()
+const { t } = useI18n()
 const datasets = ref([])
 const loading = ref(false)
 const showUploadDialog = ref(false)
@@ -271,7 +273,7 @@ const fetchDatasets = async () => {
     const res = await datasetApi.list()
     datasets.value = res.data
   } catch (error) {
-    ElMessage.error('获取数据集失败: ' + error.message)
+    ElMessage.error(t('dataset.errors.fetchFailed', { msg: error.message }))
   } finally {
     loading.value = false
   }
@@ -283,7 +285,7 @@ const handleFileChange = (file) => {
 
 const submitUpload = async () => {
   if (!uploadForm.value.name || !selectedFile.value) {
-    ElMessage.warning('请填写名称并选择文件')
+    ElMessage.warning(t('dataset.validation.nameAndFileRequired'))
     return
   }
 
@@ -294,13 +296,13 @@ const submitUpload = async () => {
 
   try {
     await datasetApi.upload(formData)
-    ElMessage.success('上传成功')
+    ElMessage.success(t('common.success'))
     showUploadDialog.value = false
     uploadForm.value.name = ''
     selectedFile.value = null
     await fetchDatasets()
   } catch (error) {
-    ElMessage.error('上传失败: ' + error.message)
+    ElMessage.error(t('dataset.errors.uploadFailed', { msg: error.message }))
   } finally {
     uploading.value = false
   }
@@ -312,7 +314,7 @@ const previewDataset = async (row) => {
     previewData.value = res.data
     showPreviewDialog.value = true
   } catch (error) {
-    ElMessage.error('预览失败: ' + error.message)
+    ElMessage.error(t('dataset.errors.previewFailed', { msg: error.message }))
   }
 }
 
@@ -324,7 +326,7 @@ const showQuality = async (row) => {
     const res = await datasetApi.quality(row.id)
     qualityData.value = res.data
   } catch (error) {
-    ElMessage.error('获取质量报告失败: ' + error.message)
+    ElMessage.error(t('dataset.errors.qualityFailed', { msg: error.message }))
     showQualityDialog.value = false
   } finally {
     qualityLoading.value = false
@@ -386,12 +388,12 @@ const outlierOption = computed(() => {
 const dimensionList = computed(() => {
   if (!qualityData.value) return []
   const dims = [
-    { key: 'completeness', label: '完整性' },
-    { key: 'consistency', label: '一致性' },
-    { key: 'accuracy', label: '准确性' },
-    { key: 'timeliness', label: '时效性' },
-    { key: 'uniqueness', label: '唯一性' },
-    { key: 'validity', label: '有效性' },
+    { key: 'completeness', label: t('dataset.quality.dimensions.completeness') },
+    { key: 'consistency', label: t('dataset.quality.dimensions.consistency') },
+    { key: 'accuracy', label: t('dataset.quality.dimensions.accuracy') },
+    { key: 'timeliness', label: t('dataset.quality.dimensions.timeliness') },
+    { key: 'uniqueness', label: t('dataset.quality.dimensions.uniqueness') },
+    { key: 'validity', label: t('dataset.quality.dimensions.validity') },
   ]
   return dims.map((d) => ({
     ...d,
@@ -408,7 +410,7 @@ const submitTrain = async (payload) => {
   training.value = true
   try {
     const res = await runApi.create(payload)
-    ElMessage.success(payload.mode === 'step' ? 'Pipeline 草稿已创建' : '训练任务已启动')
+    ElMessage.success(payload.mode === 'step' ? t('run.pipelineCreated') : t('run.created'))
     showTrainDialog.value = false
     if (payload.mode === 'step') {
       router.push(`/runs/${res.data.id}/pipeline`)
@@ -416,7 +418,7 @@ const submitTrain = async (payload) => {
       router.push(`/runs/${res.data.id}`)
     }
   } catch (error) {
-    ElMessage.error('启动训练失败: ' + error.message)
+    ElMessage.error(t('run.errors.createFailed', { msg: error.message }))
   } finally {
     training.value = false
   }
@@ -428,13 +430,13 @@ const handleSelectionChange = (rows) => {
 
 const deleteDataset = async (row) => {
   try {
-    await ElMessageBox.confirm('确定删除该数据集吗？', '提示', { type: 'warning', confirmButtonText: '确定', cancelButtonText: '取消' })
+    await ElMessageBox.confirm(t('dataset.deleteConfirm'), t('messageBox.title'), { type: 'warning', confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel') })
     await datasetApi.delete(row.id)
-    ElMessage.success('删除成功')
+    ElMessage.success(t('common.success'))
     await fetchDatasets()
   } catch (error) {
     if (error !== 'cancel') {
-      ElMessage.error('删除失败: ' + error.message)
+      ElMessage.error(t('dataset.errors.deleteFailed', { msg: error.message }))
     }
   }
 }
@@ -443,22 +445,22 @@ const batchDeleteDatasets = async () => {
   const ids = selectedDatasets.value.map((d) => d.id)
   if (!ids.length) return
   try {
-    await ElMessageBox.confirm(`确定删除选中的 ${ids.length} 个数据集吗？`, '提示', { type: 'warning', confirmButtonText: '确定', cancelButtonText: '取消' })
+    await ElMessageBox.confirm(t('dataset.batchDeleteConfirm', { count: ids.length }), t('messageBox.title'), { type: 'warning', confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel') })
     await Promise.all(ids.map((id) => datasetApi.delete(id)))
-    ElMessage.success('批量删除成功')
+    ElMessage.success(t('common.success'))
     selectedDatasets.value = []
     await fetchDatasets()
   } catch (error) {
     if (error !== 'cancel') {
-      ElMessage.error('批量删除失败: ' + error.message)
+      ElMessage.error(t('dataset.errors.batchDeleteFailed', { msg: error.message }))
     }
   }
 }
 
 const formatSize = (bytes) => {
-  if (bytes < 1024) return bytes + ' B'
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB'
-  return (bytes / 1024 / 1024).toFixed(2) + ' MB'
+  if (bytes < 1024) return bytes + ' ' + t('dataset.fileSize.b')
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' ' + t('dataset.fileSize.kb')
+  return (bytes / 1024 / 1024).toFixed(2) + ' ' + t('dataset.fileSize.mb')
 }
 
 const formatDate = (date) => {
@@ -470,12 +472,12 @@ const trainDefaultDataset = async () => {
     const res = await datasetApi.list()
     const defaultDataset = res.data.find((d) => d.name === 'iris')
     if (!defaultDataset) {
-      ElMessage.warning('默认数据集尚未加载，请刷新页面')
+      ElMessage.warning(t('dataset.defaultNotReady'))
       return
     }
 
     trainingDefault.value = true
-    ElMessage.info('正在使用默认数据集启动训练，请稍候...')
+    ElMessage.info(t('dataset.defaultStarting'))
     const runRes = await runApi.create({
       dataset_id: defaultDataset.id,
       target_column: 'target',
@@ -483,10 +485,10 @@ const trainDefaultDataset = async () => {
       time_budget_minutes: 5,
       preset: 'auto',
     })
-    ElMessage.success('默认数据集训练任务已启动')
+    ElMessage.success(t('dataset.defaultStarted'))
     router.push(`/runs/${runRes.data.id}`)
   } catch (error) {
-    ElMessage.error('启动默认训练失败: ' + error.message)
+    ElMessage.error(t('dataset.errors.startDefaultFailed', { msg: error.message }))
   } finally {
     trainingDefault.value = false
   }

@@ -4,9 +4,11 @@
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { runApi } from '@/api'
 
 export const usePipelineStore = defineStore('pipeline', () => {
+  const { t } = useI18n()
   const runId = ref(null)
   const run = ref(null)
   const steps = ref([])
@@ -71,7 +73,7 @@ export const usePipelineStore = defineStore('pipeline', () => {
     try {
       await runApi.executeStep(runId.value, stepName)
     } catch (e) {
-      error.value = e.message || '执行步骤失败'
+      error.value = e.message || t('pipeline.messages.stepExecuteFailed')
       throw e
     } finally {
       loading.value = false
@@ -85,7 +87,7 @@ export const usePipelineStore = defineStore('pipeline', () => {
     try {
       await runApi.continue(runId.value, stepName)
     } catch (e) {
-      error.value = e.message || '继续执行失败'
+      error.value = e.message || t('pipeline.messages.continueFailed')
       throw e
     } finally {
       loading.value = false

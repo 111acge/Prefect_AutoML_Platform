@@ -9,6 +9,7 @@ from typing import Dict, Any, Optional, Union, Tuple
 
 import pandas as pd
 
+from i18n import _
 from services.schema_service import infer_field_type as _schema_infer_field_type
 
 
@@ -48,7 +49,7 @@ def load_dataframe(file_path: Union[str, Path]) -> pd.DataFrame:
     elif suffix in (".jsonl", ".json"):
         return pd.read_json(file_path, lines=True)
     else:
-        raise ValueError(f"不支持的文件格式: {suffix}")
+        raise ValueError(_("data.unsupported_format", suffix=suffix))
 
 
 def _column_name_score(col: str) -> float:

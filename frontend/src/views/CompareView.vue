@@ -9,15 +9,15 @@ See LICENSE for details.
     <el-card>
       <template #header>
         <div class="card-header">
-          <span>跨 Run 模型对比</span>
+          <span>{{ $t('compare.title') }}</span>
           <el-button type="primary" @click="runCompare" :loading="loading" :disabled="selectedRuns.length < 2">
-            开始对比
+            {{ $t('compare.start') }}
           </el-button>
         </div>
       </template>
 
       <el-alert
-        title="请选择 2~10 个已完成的训练任务进行对比（仅显示已完成任务）"
+        :title="$t('compare.selectHint')"
         type="info"
         :closable="false"
         style="margin-bottom: 16px;"
@@ -26,7 +26,7 @@ See LICENSE for details.
       <div class="table-toolbar">
         <el-input
           v-model="searchQuery"
-          placeholder="搜索任务 ID 或数据集"
+          :placeholder="$t('compare.searchPlaceholder')"
           style="width: 300px"
           clearable
         />
@@ -40,21 +40,21 @@ See LICENSE for details.
         max-height="360px"
       >
         <el-table-column type="selection" width="55" />
-        <el-table-column prop="id" label="Run ID" width="220" sortable />
-        <el-table-column prop="dataset_name" label="数据集" sortable />
-        <el-table-column prop="status" label="状态" sortable>
+        <el-table-column prop="id" :label="$t('compare.columns.runId')" width="220" sortable />
+        <el-table-column prop="dataset_name" :label="$t('compare.columns.dataset')" sortable />
+        <el-table-column prop="status" :label="$t('compare.columns.status')" sortable>
           <template #default="{ row }">
             <el-tag :type="statusType(row.status)">{{ row.status }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="primary_metric" label="主指标" />
-        <el-table-column label="操作" width="120">
+        <el-table-column prop="primary_metric" :label="$t('compare.columns.primaryMetric')" />
+        <el-table-column :label="$t('common.actions')" width="120">
           <template #default="{ row }">
-            <el-button size="small" @click="viewDetail(row)">详情</el-button>
+            <el-button size="small" @click="viewDetail(row)">{{ $t('compare.detail') }}</el-button>
           </template>
         </el-table-column>
         <template #empty>
-          <el-empty description="暂无已完成的训练任务，请先去训练任务页完成训练" />
+          <el-empty :description="$t('compare.empty')" />
         </template>
       </el-table>
 
@@ -70,39 +70,39 @@ See LICENSE for details.
 
     <el-card v-if="comparison" class="result-card">
       <template #header>
-        <span>对比结果</span>
+        <span>{{ $t('compare.result.title') }}</span>
       </template>
 
       <el-alert
         v-if="comparison.best_run_id"
-        :title="`最佳 Run: ${comparison.best_run_id}${comparison.metric_name ? '（按 ' + comparison.metric_name + '）' : ''}`"
+        :title="$t('compare.result.bestRun', { runId: comparison.best_run_id }) + (comparison.metric_name ? $t('compare.result.byMetric', { metric: comparison.metric_name }) : '')"
         type="success"
         :closable="false"
         style="margin-bottom: 16px;"
       />
       <el-alert
         v-else
-        title="无法判定最佳 Run：缺少可比较的指标或模型评分"
+        :title="$t('compare.result.noBestRun')"
         type="warning"
         :closable="false"
         style="margin-bottom: 16px;"
       />
 
-      <h3>指标对比</h3>
+      <h3>{{ $t('compare.result.metricComparison') }}</h3>
       <el-table :data="comparison.runs" style="width: 100%" border>
-        <el-table-column prop="run_id" label="Run ID" width="220" />
-        <el-table-column prop="dataset_name" label="数据集" />
-        <el-table-column prop="best_model" label="最佳模型" min-width="160" show-overflow-tooltip>
+        <el-table-column prop="run_id" :label="$t('compare.result.runId')" width="220" />
+        <el-table-column prop="dataset_name" :label="$t('compare.result.dataset')" />
+        <el-table-column prop="best_model" :label="$t('compare.result.bestModel')" min-width="160" show-overflow-tooltip>
           <template #default="{ row }">
-            {{ row.best_model || '无模型数据' }}
+            {{ row.best_model || $t('compare.result.noModelData') }}
           </template>
         </el-table-column>
-        <el-table-column prop="best_model_score" label="模型评分" min-width="120">
+        <el-table-column prop="best_model_score" :label="$t('compare.result.modelScore')" min-width="120">
           <template #default="{ row }">
             {{ row.best_model_score !== null && row.best_model_score !== undefined ? row.best_model_score.toFixed(4) : '-' }}
           </template>
         </el-table-column>
-        <el-table-column prop="feature_count" label="特征数" />
+        <el-table-column prop="feature_count" :label="$t('compare.result.featureCount')" />
         <el-table-column v-for="key in metricKeys" :key="key" :prop="`metrics.${key}`" :label="key">
           <template #default="{ row }">
             {{ row.metrics[key]?.toFixed(4) ?? '-' }}
@@ -110,9 +110,9 @@ See LICENSE for details.
         </el-table-column>
       </el-table>
 
-      <h3>主指标可视化</h3>
+      <h3>{{ $t('compare.result.visualization') }}</h3>
       <EChart v-if="chartOption" :option="chartOption" height="360px" />
-      <el-empty v-else-if="comparison" description="缺少共同主指标，无法绘制对比图表" />
+      <el-empty v-else-if="comparison" :description="$t('compare.result.noCommonMetric')" />
     </el-card>
   </div>
 </template>
@@ -120,11 +120,13 @@ See LICENSE for details.
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { runApi } from '@/api'
 import EChart from '@/components/EChart.vue'
 
 const router = useRouter()
+const { t } = useI18n()
 const runs = ref([])
 const runsLoading = ref(false)
 const selectedRuns = ref([])
@@ -190,7 +192,7 @@ const fetchRuns = async () => {
         dataset_name: run.config?.snapshot?.dataset_name || run.dataset_id,
       }))
   } catch (error) {
-    ElMessage.error('获取任务列表失败: ' + error.message)
+    ElMessage.error(t('compare.errors.fetchFailed', { msg: error.message }))
   } finally {
     runsLoading.value = false
   }
@@ -202,7 +204,7 @@ const handleSelectionChange = (rows) => {
 
 const runCompare = async () => {
   if (selectedRuns.value.length < 2) {
-    ElMessage.warning('请至少选择 2 个任务')
+    ElMessage.warning(t('compare.validation.minTwo'))
     return
   }
   loading.value = true
@@ -210,7 +212,7 @@ const runCompare = async () => {
     const res = await runApi.compare({ run_ids: selectedRuns.value.map((r) => r.id) })
     comparison.value = res.data
   } catch (error) {
-    ElMessage.error('对比失败: ' + error.message)
+    ElMessage.error(t('compare.errors.compareFailed', { msg: error.message }))
   } finally {
     loading.value = false
   }

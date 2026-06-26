@@ -18,22 +18,40 @@ See LICENSE for details.
         :ellipsis="false"
         router
       >
-        <el-menu-item index="/">首页</el-menu-item>
-        <el-menu-item index="/datasets">数据集</el-menu-item>
+        <el-menu-item index="/">{{ $t('nav.home') }}</el-menu-item>
+        <el-menu-item index="/datasets">{{ $t('nav.datasets') }}</el-menu-item>
         <el-menu-item index="/runs">
-          训练任务
+          {{ $t('nav.runs') }}
           <el-badge v-if="runningCount > 0" :value="runningCount" class="running-badge" />
         </el-menu-item>
-        <el-menu-item index="/compare">模型对比</el-menu-item>
+        <el-menu-item index="/compare">{{ $t('nav.compare') }}</el-menu-item>
       </el-menu>
       <div class="header-actions">
+        <el-dropdown @command="changeLocale" class="locale-switch">
+          <el-button text>
+            {{ currentLocaleLabel }}
+            <el-icon class="el-icon--right"><arrow-down /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item
+                v-for="loc in supportedLocales"
+                :key="loc.value"
+                :command="loc.value"
+                :disabled="loc.value === currentLocale"
+              >
+                {{ loc.label }}
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-button
           :icon="Key"
           type="primary"
           text
           @click="llmDialogVisible = true"
         >
-          LLM 配置
+          {{ $t('nav.llmSettings') }}
         </el-button>
       </div>
     </el-header>
@@ -43,13 +61,13 @@ See LICENSE for details.
     </el-main>
     <el-footer class="app-footer">
       <div class="footer-content">
-        <span>Prefect AutoML Platform v0.1.0</span>
+        <span>{{ $t('app.title') }} v0.1.0</span>
         <span class="footer-divider">|</span>
-        <span>Powered by Prefect + AutoGluon + FastAPI + Vue 3</span>
+        <span>{{ $t('app.poweredBy') }}</span>
         <span class="footer-divider">|</span>
-        <el-link type="primary" href="https://github.com" target="_blank">文档</el-link>
+        <el-link type="primary" href="https://github.com" target="_blank">{{ $t('app.docs') }}</el-link>
         <span class="footer-divider">|</span>
-        <el-link type="primary" href="https://github.com" target="_blank">问题反馈</el-link>
+        <el-link type="primary" href="https://github.com" target="_blank">{{ $t('app.feedback') }}</el-link>
       </div>
     </el-footer>
   </el-container>
@@ -58,15 +76,25 @@ See LICENSE for details.
 <script setup>
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { DataLine, Key } from '@element-plus/icons-vue'
+import { DataLine, Key, ArrowDown } from '@element-plus/icons-vue'
 import { runApi } from '@/api'
 import LLMSettingsDialog from '@/components/LLMSettingsDialog.vue'
+import { setLocale, getLocale, SUPPORTED_LOCALES } from '@/i18n'
 
 const route = useRoute()
 const activeIndex = computed(() => route.path)
 const runningCount = ref(0)
 const llmDialogVisible = ref(false)
 let timer = null
+
+const currentLocale = getLocale()
+const currentLocaleLabel = SUPPORTED_LOCALES.find((l) => l.value === currentLocale)?.label || currentLocale
+const supportedLocales = SUPPORTED_LOCALES
+
+const changeLocale = (locale) => {
+  setLocale(locale)
+  window.location.reload()
+}
 
 const checkRunning = async () => {
   try {
@@ -119,6 +147,10 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.locale-switch {
+  margin-right: 4px;
 }
 
 .app-footer {

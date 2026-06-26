@@ -15,6 +15,7 @@ import pandas as pd
 from autogluon.tabular import TabularPredictor
 from sklearn.utils.class_weight import compute_sample_weight
 from services.explainability import compute_shap_values, compute_permutation_importance
+from i18n import _
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +38,9 @@ class AutoMLService:
         if self.model_dir.exists():
             import shutil
 
-            logger.info(f"清理已有模型目录: {self.model_dir}")
+            logger.info(_("training.cleaning_model_dir", path=self.model_dir))
             shutil.rmtree(self.model_dir)
-        logger.info(f"模型目录已准备: {self.model_dir}, exists={self.model_dir.exists()}")
+        logger.info(_("training.model_dir_ready", path=self.model_dir, exists=self.model_dir.exists()))
 
     def train(
         self,
@@ -73,11 +74,17 @@ class AutoMLService:
         if seed is not None:
             random.seed(seed)
             np.random.seed(seed)
-            logger.info(f"设置随机种子: {seed}")
+            logger.info(_("training.seed_set", seed=seed))
 
         logger.info(
-            f"开始训练: target={target_column}, task={task_type}, preset={preset}, "
-            f"metric={primary_metric}, max_models={max_models}"
+            _(
+                "training.starting_automl",
+                target=target_column,
+                task=task_type,
+                preset=preset,
+                metric=primary_metric,
+                max_models=max_models,
+            )
         )
 
         fit_kwargs: Dict[str, Any] = {
@@ -105,7 +112,7 @@ class AutoMLService:
                 use_sample_weight = True
                 train_data = train_data.copy()
                 train_data[sample_weight_col] = sample_weight.values
-                logger.info(f"使用传入的 sample_weight，imbalance_ratio={imbalance_ratio:.2f}")
+                logger.info(_("training.using_sample_weight", ratio=f"{imbalance_ratio:.2f}"))
             elif strategy is not None:
                 # 策略未指定时，按 imbalance_ratio 自动兜底
                 use_sample_weight = strategy.get("use_sample_weight", imbalance_ratio > 1.5)
@@ -114,7 +121,7 @@ class AutoMLService:
                     train_data = train_data.copy()
                     train_data[sample_weight_col] = sample_weights
                     logger.info(
-                        f"策略启用 balanced sample_weight，imbalance_ratio={imbalance_ratio:.2f}"
+                        _("training.strategy_sample_weight", ratio=f"{imbalance_ratio:.2f}")
                     )
             elif imbalance_ratio > 1.5:
                 use_sample_weight = True
@@ -122,7 +129,10 @@ class AutoMLService:
                 train_data = train_data.copy()
                 train_data[sample_weight_col] = sample_weights
                 logger.info(
-                    f"自动检测到类别不平衡 (ratio={imbalance_ratio:.2f})，已启用 balanced sample_weight"
+                    _(
+                        "strategy.imbalance_balanced_weight",
+                        ratio=f"{imbalance_ratio:.2f}",
+                    )
                 )
 
         # 确保 fit_kwargs 使用最新的 train_data（可能已加入 sample_weight 列）
@@ -145,8 +155,10 @@ class AutoMLService:
                 requested_folds = validation_strategy.get("n_folds", 5)
                 if min_class_count is not None and min_class_count < 2:
                     logger.warning(
-                        f"最小类样本数={min_class_count}，无法使用 AutoGluon CV bagging，"
-                        f"回退到 holdout 验证"
+                        _(
+                            "training.cv_bagging_fallback",
+                            count=min_class_count,
+                        )
                     )
                     fit_kwargs.pop("num_bag_folds", None)
                     fit_kwargs["holdout_frac"] = validation_strategy.get(
@@ -158,7 +170,7 @@ class AutoMLService:
                     # 使用 bagging 实现 KFold CV；移除 holdout_frac 避免冲突
                     fit_kwargs["num_bag_folds"] = requested_folds
                     fit_kwargs.pop("holdout_frac", None)
-                    logger.info(f"启用 CV: num_bag_folds={fit_kwargs['num_bag_folds']}")
+                    logger.info(_("training.cv_enabled", n_folds=fit_kwargs["num_bag_folds"]))
             else:
                 holdout_frac = validation_strategy.get("holdout_frac")
                 if holdout_frac is not None:
@@ -170,7 +182,7 @@ class AutoMLService:
             import shutil
 
             shutil.rmtree(self.model_dir, ignore_errors=True)
-            logger.info(f"清理已存在的模型目录: {self.model_dir}")
+            logger.info(_("training.cleaning_model_dir", path=self.model_dir))
 
         # 训练模型
         predictor_kwargs = {
@@ -195,8 +207,11 @@ class AutoMLService:
         ensemble_fallback = self._apply_ensemble_fallback(predictor, leaderboard)
         if ensemble_fallback.get("fallback_applied"):
             logger.info(
-                f"集成回退: {ensemble_fallback.get('top_model')} -> "
-                f"{ensemble_fallback.get('best_single_model')}"
+                _(
+                    "training.ensemble_fallback_applied",
+                    top_model=ensemble_fallback.get("top_model"),
+                    best_single_model=ensemble_fallback.get("best_single_model"),
+                )
             )
 
         # 特征重要性
@@ -208,7 +223,7 @@ class AutoMLService:
                 importance_path, index=False
             )
         except Exception as e:
-            logger.warning(f"特征重要性计算失败: {e}")
+            logger.warning(_("training.feature_importance_failed", msg=e))
             importance = None
 
         # SHAP 可解释性（排除样本权重列）
@@ -264,7 +279,7 @@ class AutoMLService:
                 probabilities = predictor.predict_proba(data)
                 result["probabilities"] = probabilities.to_dict(orient="records")
             except Exception as e:
-                logger.warning(f"概率预测失败: {e}")
+                logger.warning(_("training.probability_prediction_failed", msg=e))
 
         return result
 
@@ -276,7 +291,7 @@ class AutoMLService:
     ) -> Dict[str, Any]:
         """检查 WeightedEnsemble 是否显著优于最优单模型；否则回退。"""
         if leaderboard.empty or "model" not in leaderboard.columns:
-            return {"fallback_applied": False, "reason": "leaderboard 为空"}
+            return {"fallback_applied": False, "reason": _("automl.leaderboard_empty")}
 
         score_col = "score_val"
         if score_col not in leaderboard.columns:
@@ -298,7 +313,7 @@ class AutoMLService:
             return {
                 "fallback_applied": False,
                 "ensemble_used": True,
-                "reason": "无单模型可比较",
+                "reason": _("automl.no_single_model"),
                 "top_model": top_name,
             }
 
@@ -329,7 +344,7 @@ class AutoMLService:
                     predictor.delete_models(models_to_delete=ensemble_models)
                 result["models_removed"] = ensemble_models
             except Exception as e:
-                logger.warning(f"集成回退失败: {e}")
+                logger.warning(_("training.ensemble_fallback_failed", msg=e))
                 result["fallback_error"] = str(e)
 
         return result

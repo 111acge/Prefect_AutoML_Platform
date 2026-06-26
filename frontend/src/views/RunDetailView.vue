@@ -6,10 +6,10 @@ See LICENSE for details.
 
 <template>
   <div class="run-detail">
-    <el-page-header @back="$router.push('/runs')" title="任务详情">
+    <el-page-header @back="$router.push('/runs')" :title="$t('runDetail.title')">
       <template #extra>
         <el-button size="small" @click="$router.push(`/runs/${run.id}/pipeline`)">
-          查看 Pipeline
+          {{ $t('runDetail.viewPipeline') }}
         </el-button>
       </template>
     </el-page-header>
@@ -17,25 +17,25 @@ See LICENSE for details.
     <el-card v-loading="loading" class="info-card">
       <template #header>
         <div class="card-header">
-          <span>任务信息</span>
+          <span>{{ $t('runDetail.info.title') }}</span>
           <el-tag :type="statusType(run.status)">{{ statusLabel(run.status) }}</el-tag>
         </div>
       </template>
 
       <el-descriptions :column="2" border>
-        <el-descriptions-item label="任务ID">{{ run.id }}</el-descriptions-item>
-        <el-descriptions-item label="数据集">{{ run.dataset_id }}</el-descriptions-item>
-        <el-descriptions-item label="目标列">{{ run.config?.target_column || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="任务类型">{{ taskTypeLabel(run.config?.task_type) }}</el-descriptions-item>
-        <el-descriptions-item label="评估指标">{{ run.primary_metric || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="时间预算">{{ run.time_budget_minutes ?? '无限制' }} min</el-descriptions-item>
-        <el-descriptions-item label="随机种子">{{ run.config?.seed ?? '-' }}</el-descriptions-item>
-        <el-descriptions-item label="创建时间">{{ formatDate(run.created_at) }}</el-descriptions-item>
-        <el-descriptions-item label="完成时间" v-if="run.completed_at">{{ formatDate(run.completed_at) }}</el-descriptions-item>
-        <el-descriptions-item label="错误信息" v-if="run.error_message">
+        <el-descriptions-item :label="$t('runDetail.info.runId')">{{ run.id }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('runDetail.info.dataset')">{{ run.dataset_id }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('runDetail.info.targetColumn')">{{ run.config?.target_column || '-' }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('runDetail.info.taskType')">{{ taskTypeLabel(run.config?.task_type) }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('runDetail.info.metric')">{{ run.primary_metric || '-' }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('runDetail.info.timeBudget')">{{ run.time_budget_minutes ?? $t('common.unlimited') }} min</el-descriptions-item>
+        <el-descriptions-item :label="$t('runDetail.info.seed')">{{ run.config?.seed ?? '-' }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('runDetail.info.createdAt')">{{ formatDate(run.created_at) }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('runDetail.info.completedAt')" v-if="run.completed_at">{{ formatDate(run.completed_at) }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('runDetail.info.error')" v-if="run.error_message">
           <span class="error-text">{{ run.error_message }}</span>
         </el-descriptions-item>
-        <el-descriptions-item label="错误类型" v-if="results?.error_details?.error_type">
+        <el-descriptions-item :label="$t('runDetail.info.errorType')" v-if="results?.error_details?.error_type">
           <span class="error-text">{{ results.error_details.error_type }}</span>
         </el-descriptions-item>
       </el-descriptions>
@@ -44,7 +44,7 @@ See LICENSE for details.
     <el-card v-if="!isTerminal(run.status) || run.status === 'failed'" class="progress-card">
       <template #header>
         <div class="card-header">
-          <span>训练进度</span>
+          <span>{{ $t('runDetail.progress') }}</span>
           <el-tag :type="statusType(run.status)">{{ statusLabel(run.status) }}</el-tag>
         </div>
       </template>
@@ -73,23 +73,23 @@ See LICENSE for details.
         </div>
       </div>
 
-      <h3 class="section-title">实时日志</h3>
+      <h3 class="section-title">{{ $t('runDetail.logs.title') }}</h3>
       <el-input
         ref="logTextareaRef"
         v-model="logs"
         type="textarea"
         :rows="12"
         readonly
-        placeholder="日志加载中..."
+        :placeholder="$t('runDetail.logs.loading')"
         class="log-textarea"
       />
     </el-card>
 
     <el-card v-if="results" class="result-card">
       <el-tabs v-model="activeTab" type="border-card">
-        <el-tab-pane label="概览" name="overview">
+        <el-tab-pane :label="$t('runDetail.tabs.overview')" name="overview">
           <div class="tab-content">
-            <h3 class="section-title">测试集评估指标</h3>
+            <h3 class="section-title">{{ $t('runDetail.overview.testMetrics') }}</h3>
             <el-row :gutter="16" class="metric-row">
               <el-col :xs="12" :sm="8" :md="6" :lg="4" v-for="(value, key) in results.metrics" :key="key">
                 <el-statistic :title="key" :value="typeof value === 'number' ? value : NaN" :precision="4" />
@@ -97,7 +97,7 @@ See LICENSE for details.
             </el-row>
 
             <template v-if="results.train_metrics && Object.keys(results.train_metrics).length > 0">
-              <h3 class="section-title">训练集参考指标</h3>
+              <h3 class="section-title">{{ $t('runDetail.overview.trainMetrics') }}</h3>
               <el-row :gutter="16" class="metric-row">
                 <el-col :xs="12" :sm="8" :md="6" :lg="4" v-for="(value, key) in results.train_metrics" :key="key">
                   <el-statistic :title="key" :value="typeof value === 'number' ? value : NaN" :precision="4" />
@@ -106,34 +106,34 @@ See LICENSE for details.
             </template>
 
             <template v-if="results.cv_results && results.cv_results.cv_scores">
-              <h3 class="section-title">交叉验证</h3>
+              <h3 class="section-title">{{ $t('runDetail.overview.cv.title') }}</h3>
               <el-row :gutter="16" class="metric-row">
                 <el-col :xs="12" :sm="6">
                   <div class="metric-item">
-                    <div class="metric-label">CV 类型</div>
+                    <div class="metric-label">{{ $t('runDetail.overview.cv.type') }}</div>
                     <div class="metric-value">{{ results.cv_results.cv_type }}</div>
                   </div>
                 </el-col>
                 <el-col :xs="12" :sm="6">
-                  <el-statistic title="折数" :value="results.cv_results.n_folds" />
+                  <el-statistic :title="$t('runDetail.overview.cv.folds')" :value="results.cv_results.n_folds" />
                 </el-col>
                 <el-col :xs="12" :sm="6">
-                  <el-statistic title="CV 均值" :value="results.cv_results.cv_mean" :precision="4" />
+                  <el-statistic :title="$t('runDetail.overview.cv.mean')" :value="results.cv_results.cv_mean" :precision="4" />
                 </el-col>
                 <el-col :xs="12" :sm="6">
-                  <el-statistic title="CV 标准差" :value="results.cv_results.cv_std" :precision="4" />
+                  <el-statistic :title="$t('runDetail.overview.cv.std')" :value="results.cv_results.cv_std" :precision="4" />
                 </el-col>
               </el-row>
               <el-alert
                 v-if="results.cv_results.cv_error"
-                :title="'CV 计算失败: ' + results.cv_results.cv_error"
+                :title="$t('runDetail.overview.cv.failed', { msg: results.cv_results.cv_error })"
                 type="warning"
                 :closable="false"
               />
             </template>
 
             <template v-if="extendedMetricItems.length > 0">
-              <h3 class="section-title">扩展评估指标</h3>
+              <h3 class="section-title">{{ $t('runDetail.overview.extendedMetrics') }}</h3>
               <el-row :gutter="16" class="metric-row">
                 <el-col :xs="12" :sm="8" :md="6" :lg="4" v-for="item in extendedMetricItems" :key="item.key">
                   <el-statistic :title="item.label" :value="Number(item.value)" :precision="4" />
@@ -142,18 +142,18 @@ See LICENSE for details.
             </template>
 
             <template v-if="results.business_interpretation">
-              <h3 class="section-title">业务解读摘要</h3>
+              <h3 class="section-title">{{ $t('runDetail.overview.interpretation.title') }}</h3>
               <el-card shadow="never" class="interpretation-card">
                 <el-alert
                   v-if="results.business_interpretation.provider === 'rule_template'"
-                  title="当前为规则模板生成的兜底解读"
+                  :title="$t('runDetail.overview.interpretation.ruleBased')"
                   type="info"
                   :closable="false"
                   style="margin-bottom: 12px;"
                 >
                   <template #default>
                     <div>
-                      当前为规则模板生成的兜底解读。若需 LLM 智能解读，请主动点击生成。
+                      {{ $t('runDetail.overview.interpretation.ruleBasedDesc') }}
                       <el-button
                         v-if="llmConfigured"
                         link
@@ -161,7 +161,7 @@ See LICENSE for details.
                         :loading="regeneratingInterpretation"
                         @click="openDisclaimer"
                       >
-                        生成 LLM 业务解读
+                        {{ $t('runDetail.overview.interpretation.generateLLM') }}
                       </el-button>
                       <el-button
                         v-else
@@ -169,7 +169,7 @@ See LICENSE for details.
                         type="primary"
                         @click="llmDialogVisible = true"
                       >
-                        配置 LLM API Key
+                        {{ $t('runDetail.overview.interpretation.configureLLM') }}
                       </el-button>
                     </div>
                   </template>
@@ -178,7 +178,7 @@ See LICENSE for details.
                   {{ results.business_interpretation.business_summary }}
                 </p>
                 <div v-if="results.business_interpretation.key_insights?.length" class="interpretation-section">
-                  <h4>关键发现</h4>
+                  <h4>{{ $t('runDetail.overview.interpretation.keyFindings') }}</h4>
                   <ul>
                     <li v-for="(item, idx) in results.business_interpretation.key_insights" :key="'insight-' + idx">
                       {{ item }}
@@ -186,7 +186,7 @@ See LICENSE for details.
                   </ul>
                 </div>
                 <div v-if="results.business_interpretation.feature_interpretations?.length" class="interpretation-section">
-                  <h4>Top 特征业务含义</h4>
+                  <h4>{{ $t('runDetail.overview.interpretation.featureMeanings') }}</h4>
                   <ul>
                     <li v-for="(item, idx) in results.business_interpretation.feature_interpretations" :key="'feature-' + idx">
                       <strong>{{ item.feature || item }}</strong>
@@ -195,7 +195,7 @@ See LICENSE for details.
                   </ul>
                 </div>
                 <div v-if="results.business_interpretation.caveats?.length" class="interpretation-section">
-                  <h4>使用注意</h4>
+                  <h4>{{ $t('runDetail.overview.interpretation.caveats') }}</h4>
                   <ul>
                     <li v-for="(item, idx) in results.business_interpretation.caveats" :key="'caveat-' + idx">
                       {{ item }}
@@ -203,7 +203,7 @@ See LICENSE for details.
                   </ul>
                 </div>
                 <div v-if="results.business_interpretation.recommendations?.length" class="interpretation-section">
-                  <h4>下一步建议</h4>
+                  <h4>{{ $t('runDetail.overview.interpretation.recommendations') }}</h4>
                   <ul>
                     <li v-for="(item, idx) in results.business_interpretation.recommendations" :key="'rec-' + idx">
                       {{ item }}
@@ -214,21 +214,21 @@ See LICENSE for details.
             </template>
 
             <template v-if="results?.error_details?.traceback">
-              <h3 class="section-title">错误堆栈</h3>
+              <h3 class="section-title">{{ $t('runDetail.overview.interpretation.errorStack') }}</h3>
               <el-input v-model="results.error_details.traceback" type="textarea" :rows="10" readonly />
             </template>
           </div>
         </el-tab-pane>
 
-        <el-tab-pane label="排行榜" name="leaderboard">
+        <el-tab-pane :label="$t('runDetail.tabs.leaderboard')" name="leaderboard">
           <div class="tab-content">
-            <h3 class="section-title">模型排行榜</h3>
+            <h3 class="section-title">{{ $t('runDetail.leaderboard.title') }}</h3>
             <div class="leaderboard-controls">
-              <el-select v-model="familyFilter" placeholder="模型族" style="width: 140px">
-                <el-option label="全部" value="all" />
+              <el-select v-model="familyFilter" :placeholder="$t('runDetail.leaderboard.modelFamily')" style="width: 140px">
+                <el-option :label="$t('runDetail.leaderboard.all')" value="all" />
                 <el-option v-for="f in families" :key="f" :label="f" :value="f" />
               </el-select>
-              <el-select v-model="sortBy" placeholder="排序依据" style="width: 160px; margin-left: 10px">
+              <el-select v-model="sortBy" :placeholder="$t('runDetail.leaderboard.sortBy')" style="width: 160px; margin-left: 10px">
                 <el-option v-for="col in sortableColumns" :key="col" :label="col" :value="col" />
               </el-select>
             </div>
@@ -242,7 +242,7 @@ See LICENSE for details.
               />
             </el-table>
 
-            <h3 class="section-title">特征重要性 Top 10</h3>
+            <h3 class="section-title">{{ $t('runDetail.leaderboard.featureImportanceTop10') }}</h3>
             <el-table :data="results.feature_importance.slice(0, 10)" style="width: 100%" max-height="360px" border>
               <el-table-column
                 v-for="col in importanceColumns"
@@ -255,28 +255,28 @@ See LICENSE for details.
           </div>
         </el-tab-pane>
 
-        <el-tab-pane label="特征重要性" name="features">
+        <el-tab-pane :label="$t('runDetail.tabs.features')" name="features">
           <div class="tab-content">
-            <h3 class="section-title">特征重要性 Top 15</h3>
+            <h3 class="section-title">{{ $t('runDetail.features.title') }}</h3>
             <EChart :option="featureImportanceOption" height="420px" />
 
             <template v-if="results.permutation_importance && results.permutation_importance.length">
-              <h3 class="section-title">Permutation Importance Top 15</h3>
+              <h3 class="section-title">{{ $t('runDetail.features.permutationTitle') }}</h3>
               <EChart :option="permutationImportanceOption" height="420px" />
             </template>
           </div>
         </el-tab-pane>
 
-        <el-tab-pane label="混淆矩阵" name="confusion" v-if="confusionMatrix">
+        <el-tab-pane :label="$t('runDetail.tabs.confusion')" name="confusion" v-if="confusionMatrix">
           <div class="tab-content">
-            <h3 class="section-title">混淆矩阵</h3>
+            <h3 class="section-title">{{ $t('runDetail.confusionMatrix.title') }}</h3>
             <el-row :gutter="20">
               <el-col :xs="24" :md="12">
                 <EChart :option="confusionMatrixOption" height="420px" />
               </el-col>
               <el-col :xs="24" :md="12">
                 <el-table :data="confusionMatrixRows" border style="width: 100%;">
-                  <el-table-column label="真实 \ 预测" prop="label" width="120" />
+                  <el-table-column :label="$t('runDetail.confusionMatrix.trueVsPred')" prop="label" width="120" />
                   <el-table-column
                     v-for="(label, idx) in confusionMatrixLabels"
                     :key="idx"
@@ -289,29 +289,29 @@ See LICENSE for details.
           </div>
         </el-tab-pane>
 
-        <el-tab-pane label="报告" name="report">
+        <el-tab-pane :label="$t('runDetail.tabs.report')" name="report">
           <div class="tab-content">
             <div class="action-buttons">
-              <el-button type="primary" @click="downloadReport">下载报告</el-button>
-              <el-button v-if="run.status === 'completed'" type="success" @click="downloadModel">下载模型</el-button>
+              <el-button type="primary" @click="downloadReport">{{ $t('runDetail.report.downloadReport') }}</el-button>
+              <el-button v-if="run.status === 'completed'" type="success" @click="downloadModel">{{ $t('runDetail.report.downloadModel') }}</el-button>
             </div>
             <iframe v-if="results.report_path" :src="`/api/runs/${runId}/report`" class="report-iframe"></iframe>
-            <el-empty v-else description="报告尚未生成" />
+            <el-empty v-else :description="$t('runDetail.report.notReady')" />
           </div>
         </el-tab-pane>
 
-        <el-tab-pane label="预测" name="predict">
+        <el-tab-pane :label="$t('runDetail.tabs.predict')" name="predict">
           <div class="tab-content">
             <el-row :gutter="24">
               <el-col :xs="24" :md="12">
                 <el-card shadow="never">
                   <template #header>
-                    <span>单条 / 批量 JSON 预测</span>
+                    <span>{{ $t('runDetail.predict.jsonTitle') }}</span>
                   </template>
                   <el-alert
-                    title="请输入 JSON 格式的数据数组"
+                    :title="$t('runDetail.predict.jsonHint')"
                     type="info"
-                    description='例如：[{"feature1": 1, "feature2": 2}]'
+                    :description="$t('runDetail.predict.jsonExample')"
                     show-icon
                     :closable="false"
                   />
@@ -319,22 +319,22 @@ See LICENSE for details.
                     v-model="predictInput"
                     type="textarea"
                     :rows="6"
-                    placeholder='[{"feature1": 1, "feature2": 2}]'
+                    :placeholder="$t('runDetail.predict.jsonPlaceholder')"
                     style="margin-top: 15px;"
                   />
                   <div v-if="predictResult" class="predict-result">
-                    <h4>预测结果：</h4>
+                    <h4>{{ $t('runDetail.predict.result') }}</h4>
                     <pre>{{ JSON.stringify(predictResult, null, 2) }}</pre>
                   </div>
                   <div style="margin-top: 12px; text-align: right;">
-                    <el-button type="primary" @click="submitPredict" :loading="predicting">预测</el-button>
+                    <el-button type="primary" @click="submitPredict" :loading="predicting">{{ $t('runDetail.predict.predict') }}</el-button>
                   </div>
                 </el-card>
               </el-col>
               <el-col :xs="24" :md="12">
                 <el-card shadow="never">
                   <template #header>
-                    <span>批量 CSV 预测</span>
+                    <span>{{ $t('runDetail.predict.csvTitle') }}</span>
                   </template>
                   <el-upload
                     drag
@@ -344,17 +344,17 @@ See LICENSE for details.
                     @change="handleBatchFileChange"
                   >
                     <el-icon class="el-icon--upload"><upload-icon /></el-icon>
-                    <div class="el-upload__text">拖拽 CSV 文件到此处，或 <em>点击上传</em></div>
+                    <div class="el-upload__text">{{ $t('runDetail.predict.csvDrag') }}<em>{{ $t('runDetail.predict.csvClick') }}</em></div>
                   </el-upload>
                   <div v-if="batchResultUrl" class="batch-result">
-                    <el-alert title="批量预测完成" type="success" :closable="false" />
+                    <el-alert :title="$t('runDetail.predict.completed')" type="success" :closable="false" />
                     <el-button type="primary" :href="batchResultUrl" download="predictions.csv" tag="a" style="margin-top: 12px;">
-                      下载预测结果
+                      {{ $t('runDetail.predict.downloadResult') }}
                     </el-button>
                   </div>
                   <div style="margin-top: 12px; text-align: right;">
                     <el-button type="success" @click="submitBatchPredict" :loading="batchPredicting" :disabled="!batchFile">
-                      提交批量预测
+                      {{ $t('runDetail.predict.submitBatch') }}
                     </el-button>
                   </div>
                 </el-card>
@@ -363,7 +363,7 @@ See LICENSE for details.
           </div>
         </el-tab-pane>
 
-        <el-tab-pane label="日志" name="logs">
+        <el-tab-pane :label="$t('runDetail.tabs.logs')" name="logs">
           <div class="tab-content">
             <el-input
               ref="logTextareaRef"
@@ -371,7 +371,7 @@ See LICENSE for details.
               type="textarea"
               :rows="20"
               readonly
-              placeholder="日志加载中..."
+              :placeholder="$t('runDetail.logs.loading')"
               class="log-textarea"
             />
           </div>
@@ -380,7 +380,7 @@ See LICENSE for details.
     </el-card>
 
     <el-card v-else class="result-card">
-      <el-empty :description="run.status === 'running' ? '训练进行中，结果将在完成后自动加载' : '暂无训练结果'" />
+      <el-empty :description="run.status === 'running' ? $t('runDetail.noResults') : $t('runDetail.noResultsEmpty')" />
     </el-card>
   </div>
 
@@ -388,7 +388,7 @@ See LICENSE for details.
 
   <el-dialog
     v-model="disclaimerVisible"
-    title="数据外传风险提示"
+    :title="$t('runDetail.interpretationDialog.title')"
     width="480px"
     :close-on-click-modal="false"
   >
@@ -398,15 +398,15 @@ See LICENSE for details.
       show-icon
     >
       <template #title>
-        <span>生成 LLM 业务解读将把训练摘要数据发送到第三方 LLM 服务</span>
+        <span>{{ $t('runDetail.interpretationDialog.alert') }}</span>
       </template>
-      <p>发送内容主要包括：任务类型、评估指标、Top 特征名称及重要性、数据质量摘要等。原始数据行不会被发送，但特征名称、指标数值等仍可能包含业务敏感信息，存在泄露风险。</p>
+      <p>{{ $t('runDetail.interpretationDialog.content') }}</p>
     </el-alert>
-    <p style="margin-top: 16px;">请确认是否继续生成？</p>
+    <p style="margin-top: 16px;">{{ $t('runDetail.interpretationDialog.confirm') }}</p>
     <template #footer>
-      <el-button @click="disclaimerVisible = false">取消</el-button>
+      <el-button @click="disclaimerVisible = false">{{ $t('runDetail.interpretationDialog.cancel') }}</el-button>
       <el-button type="primary" :loading="regeneratingInterpretation" @click="confirmLLMInterpretation">
-        确认生成
+        {{ $t('runDetail.interpretationDialog.confirmGenerate') }}
       </el-button>
     </template>
   </el-dialog>
@@ -419,10 +419,12 @@ import { ElMessage } from 'element-plus'
 import { Upload as UploadIcon, Check, Loading, CloseBold, Minus } from '@element-plus/icons-vue'
 import api, { runApi, llmSettingsApi } from '@/api'
 import EChart from '@/components/EChart.vue'
+import { useI18n } from 'vue-i18n'
 import LLMSettingsDialog from '@/components/LLMSettingsDialog.vue'
 
 const route = useRoute()
 const runId = route.params.id
+const { t } = useI18n()
 
 const run = ref({})
 const results = ref(null)
@@ -449,9 +451,9 @@ const familyFilter = ref('all')
 const sortBy = ref('score_val')
 
 const taskTypeLabels = {
-  binary_classification: '二分类',
-  multiclass_classification: '多分类',
-  regression: '回归',
+  binary_classification: t('trainForm.binary'),
+  multiclass_classification: t('trainForm.multiclass'),
+  regression: t('trainForm.regression'),
 }
 
 function taskTypeLabel(type) {
@@ -460,10 +462,10 @@ function taskTypeLabel(type) {
 
 function statusLabel(status) {
   const map = {
-    pending: '等待中',
-    running: '运行中',
-    completed: '已完成',
-    failed: '失败',
+    pending: t('taskStatus.pending'),
+    running: t('taskStatus.running'),
+    completed: t('taskStatus.completed'),
+    failed: t('taskStatus.failed'),
   }
   return map[status] || status
 }
@@ -486,12 +488,12 @@ const leaderboardColumns = computed(() => {
 
 const getModelFamily = (name) => {
   const n = (name || '').toLowerCase()
-  if (n.includes('lightgbm') || n.includes('catboost') || n.includes('xgboost')) return 'GBDT'
-  if (n.includes('randomforest') || n.includes('extratrees') || n.includes('xt_')) return '树集成'
-  if (n.includes('neuralnet') || n.includes('torch') || n.includes('mlp') || n.includes('fastai')) return '神经网络'
-  if (n.includes('kneighbors') || n.includes('knn')) return 'KNN'
-  if (n.includes('linearmodel') || n.includes('ridge') || n.includes('elastic') || n.includes('logistic')) return '线性模型'
-  return '其他'
+  if (n.includes('lightgbm') || n.includes('catboost') || n.includes('xgboost')) return t('runDetail.modelFamilies.gbdt')
+  if (n.includes('randomforest') || n.includes('extratrees') || n.includes('xt_')) return t('runDetail.modelFamilies.treeEnsemble')
+  if (n.includes('neuralnet') || n.includes('torch') || n.includes('mlp') || n.includes('fastai')) return t('runDetail.modelFamilies.neuralNetwork')
+  if (n.includes('kneighbors') || n.includes('knn')) return t('runDetail.modelFamilies.knn')
+  if (n.includes('linearmodel') || n.includes('ridge') || n.includes('elastic') || n.includes('logistic')) return t('runDetail.modelFamilies.linear')
+  return t('runDetail.modelFamilies.other')
 }
 
 const processedLeaderboard = computed(() => {
@@ -523,28 +525,28 @@ const importanceColumns = computed(() => {
 })
 
 const metricLabelMap = {
-  precision_macro: 'Precision (Macro)',
-  precision_weighted: 'Precision (Weighted)',
-  precision_micro: 'Precision (Micro)',
-  recall_macro: 'Recall (Macro)',
-  recall_weighted: 'Recall (Weighted)',
-  recall_micro: 'Recall (Micro)',
-  f1_macro: 'F1 (Macro)',
-  f1_weighted: 'F1 (Weighted)',
-  f1_micro: 'F1 (Micro)',
-  mcc: 'MCC',
-  cohens_kappa: "Cohen's Kappa",
-  balanced_accuracy: 'Balanced Accuracy',
-  auc_roc: 'AUC-ROC',
-  auc_pr: 'AUC-PR',
-  mae: 'MAE',
-  mse: 'MSE',
-  rmse: 'RMSE',
-  r2: 'R²',
-  mape: 'MAPE (%)',
-  smape: 'SMAPE (%)',
-  residual_mean: '残差均值',
-  residual_std: '残差标准差',
+  precision_macro: t('metric.precisionMacro'),
+  precision_weighted: t('metric.precisionWeighted'),
+  precision_micro: t('metric.precisionMicro'),
+  recall_macro: t('metric.recallMacro'),
+  recall_weighted: t('metric.recallWeighted'),
+  recall_micro: t('metric.recallMicro'),
+  f1_macro: t('metric.f1Macro'),
+  f1_weighted: t('metric.f1Weighted'),
+  f1_micro: t('metric.f1Micro'),
+  mcc: t('metric.mcc'),
+  cohens_kappa: t('metric.cohensKappa'),
+  balanced_accuracy: t('metric.balancedAccuracy'),
+  auc_roc: t('metric.aucRoc'),
+  auc_pr: t('metric.aucPr'),
+  mae: t('metric.mae'),
+  mse: t('metric.mse'),
+  rmse: t('metric.rmse'),
+  r2: t('metric.r2'),
+  mape: t('metric.mape'),
+  smape: t('metric.smape'),
+  residual_mean: t('metric.residualMean'),
+  residual_std: t('metric.residualStd'),
 }
 
 const extendedMetricItems = computed(() => {
@@ -595,8 +597,8 @@ const confusionMatrixOption = computed(() => {
   return {
     tooltip: { position: 'top' },
     grid: { height: '70%', top: '10%' },
-    xAxis: { type: 'category', data: labels, name: '预测' },
-    yAxis: { type: 'category', data: labels, name: '真实' },
+    xAxis: { type: 'category', data: labels, name: t('runDetail.confusionMatrix.predicted') },
+    yAxis: { type: 'category', data: labels, name: t('runDetail.confusionMatrix.actual') },
     visualMap: {
       min: 0,
       max: Math.max(...matrix.flat()),
@@ -621,13 +623,13 @@ const featureImportanceOption = computed(() => {
   if (!data.length) return {}
 
   const sorted = [...data].sort((a, b) => a.importance - b.importance)
-  const names = sorted.map((row) => row.feature || row['Unnamed: 0'] || row[''] || '未知')
+  const names = sorted.map((row) => row.feature || row['Unnamed: 0'] || row[''] || t('common.unknown'))
   const values = sorted.map((row) => row.importance)
 
   return {
     tooltip: { trigger: 'axis' },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
-    xAxis: { type: 'value', name: '重要性' },
+    xAxis: { type: 'value', name: t('runDetail.features.importanceAxisName') },
     yAxis: { type: 'category', data: names },
     series: [
       {
@@ -644,13 +646,13 @@ const permutationImportanceOption = computed(() => {
   if (!data.length) return {}
 
   const sorted = [...data].sort((a, b) => a.importance - b.importance)
-  const names = sorted.map((row) => row.feature || row['Unnamed: 0'] || '未知')
+  const names = sorted.map((row) => row.feature || row['Unnamed: 0'] || t('common.unknown'))
   const values = sorted.map((row) => row.importance)
 
   return {
     tooltip: { trigger: 'axis' },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
-    xAxis: { type: 'value', name: 'Permutation Importance' },
+    xAxis: { type: 'value', name: t('runDetail.features.permutationAxisName') },
     yAxis: { type: 'category', data: names },
     series: [
       {
@@ -667,7 +669,7 @@ const fetchRun = async () => {
     const res = await runApi.get(runId)
     run.value = res.data
   } catch (error) {
-    ElMessage.error('获取任务失败: ' + error.message)
+    ElMessage.error(t('runDetail.errors.fetchFailed', { msg: error.message }))
   }
 }
 
@@ -677,7 +679,7 @@ const fetchResults = async () => {
     const res = await runApi.getResults(runId)
     results.value = res.data
   } catch (error) {
-    console.error('获取结果失败:', error)
+    console.error(t('runDetail.errors.fetchResultsFailed', { msg: error.message || t('common.unknown') }), error)
   }
 }
 
@@ -687,7 +689,7 @@ const checkLLMConfig = async () => {
     llmConfigured.value = !!(res.data?.provider && res.data?.api_key_masked)
   } catch (error) {
     llmConfigured.value = false
-    console.error('检查 LLM 配置失败:', error)
+    console.error(t('runDetail.errors.checkLLMFailed', { msg: error.message || t('common.unknown') }), error)
   }
 }
 
@@ -696,9 +698,9 @@ const regenerateInterpretation = async () => {
   try {
     const res = await runApi.regenerateInterpretation(runId)
     results.value = { ...results.value, business_interpretation: res.data }
-    ElMessage.success('业务解读已重新生成')
+    ElMessage.success(t('runDetail.interpretationRegenerated'))
   } catch (error) {
-    ElMessage.error('重新生成失败: ' + (error.message || '未知错误'))
+    ElMessage.error(t('runDetail.errors.regenerateFailed', { msg: error.message || t('common.unknown') }))
   } finally {
     regeneratingInterpretation.value = false
   }
@@ -727,7 +729,7 @@ const fetchLogs = async () => {
     logs.value = res.data
     scrollLogToBottom()
   } catch (error) {
-    console.error('获取日志失败:', error)
+    console.error(t('runDetail.errors.fetchLogsFailed', { msg: error.message || t('common.unknown') }), error)
   }
 }
 
@@ -736,7 +738,7 @@ const fetchSteps = async () => {
     const res = await runApi.getSteps(runId)
     steps.value = res.data
   } catch (error) {
-    console.error('获取步骤状态失败:', error)
+    console.error(t('runDetail.errors.fetchStepsFailed', { msg: error.message || t('common.unknown') }), error)
   }
 }
 
@@ -764,7 +766,7 @@ const loadData = async () => {
 
 const submitPredict = async () => {
   if (!predictInput.value) {
-    ElMessage.warning('请输入预测数据')
+    ElMessage.warning(t('runDetail.predict.validation.dataRequired'))
     return
   }
 
@@ -774,7 +776,7 @@ const submitPredict = async () => {
     const res = await runApi.predict(runId, { data })
     predictResult.value = res.data
   } catch (error) {
-    ElMessage.error('预测失败: ' + error.message)
+    ElMessage.error(t('runDetail.predict.errors.predictFailed', { msg: error.message }))
   } finally {
     predicting.value = false
   }
@@ -790,7 +792,7 @@ const handleBatchFileChange = (file) => {
 
 const submitBatchPredict = async () => {
   if (!batchFile.value) {
-    ElMessage.warning('请选择 CSV 文件')
+    ElMessage.warning(t('runDetail.predict.validation.fileRequired'))
     return
   }
   batchPredicting.value = true
@@ -802,9 +804,9 @@ const submitBatchPredict = async () => {
       responseType: 'blob',
     })
     batchResultUrl.value = URL.createObjectURL(res.data)
-    ElMessage.success('批量预测完成')
+    ElMessage.success(t('runDetail.predict.completed'))
   } catch (error) {
-    ElMessage.error('批量预测失败: ' + (error.message || '未知错误'))
+    ElMessage.error(t('runDetail.predict.errors.batchFailed', { msg: error.message || t('common.unknown') }))
   } finally {
     batchPredicting.value = false
   }
@@ -856,18 +858,18 @@ const connectEvents = () => {
         const payload = JSON.parse(e.data)
         handleStatusEvent(payload)
       } catch (err) {
-        console.error('解析 SSE 消息失败:', err)
+        console.error(t('runDetail.errors.sseParseFailed', { msg: err.message || t('common.unknown') }), err)
       }
     }
     evtSource.onerror = (err) => {
-      console.error('SSE 连接错误，3 秒后重连:', err)
+      console.error(t('runDetail.errors.sseError', { msg: err.message || t('common.unknown') }), err)
       closeEventSource()
       if (!isTerminal(run.value.status)) {
         setTimeout(connectEvents, 3000)
       }
     }
   } catch (err) {
-    console.error('创建 EventSource 失败:', err)
+    console.error(t('runDetail.errors.sseCreateFailed', { msg: err.message || t('common.unknown') }), err)
   }
 }
 

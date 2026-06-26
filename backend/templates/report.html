@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{{ locale }}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AutoML 训练报告 - {{ run_id }}</title>
+    <title>{{ t('report.title', run_id=run_id) }}</title>
     <style>
         * { box-sizing: border-box; }
         body {
@@ -105,16 +105,16 @@
 <body>
     <div class="header">
         <h1>Prefect AutoML Platform</h1>
-        <p>端到端全自动机器学习训练报告</p>
+        <p>{{ t('report.subtitle') }}</p>
     </div>
 
     {% if interpretation %}
     <div class="card">
-        <h2>业务解读</h2>
-        <p><strong>摘要：</strong>{{ interpretation.business_summary }}</p>
+        <h2>{{ t('report.interpretation') }}</h2>
+        <p><strong>{{ t('report.summary') }}</strong>{{ interpretation.business_summary }}</p>
 
         {% if interpretation.key_insights %}
-        <h3>关键发现</h3>
+        <h3>{{ t('report.key_insights') }}</h3>
         <ul>
             {% for insight in interpretation.key_insights %}
             <li>{{ insight }}</li>
@@ -123,10 +123,10 @@
         {% endif %}
 
         {% if interpretation.feature_interpretations %}
-        <h3>特征业务含义</h3>
+        <h3>{{ t('report.feature_interpretations') }}</h3>
         <table>
             <thead>
-                <tr><th>特征</th><th>业务含义</th></tr>
+                <tr><th>{{ t('report.feature') }}</th><th>{{ t('report.business_meaning') }}</th></tr>
             </thead>
             <tbody>
                 {% for item in interpretation.feature_interpretations %}
@@ -140,7 +140,7 @@
         {% endif %}
 
         {% if interpretation.caveats %}
-        <h3>使用限制</h3>
+        <h3>{{ t('report.caveats') }}</h3>
         <ul>
             {% for caveat in interpretation.caveats %}
             <li>{{ caveat }}</li>
@@ -149,7 +149,7 @@
         {% endif %}
 
         {% if interpretation.recommendations %}
-        <h3>下一步建议</h3>
+        <h3>{{ t('report.recommendations') }}</h3>
         <ul>
             {% for rec in interpretation.recommendations %}
             <li>{{ rec }}</li>
@@ -158,66 +158,66 @@
         {% endif %}
 
         <p style="text-align: right; color: #999; font-size: 12px;">
-            解读来源: {{ interpretation.provider or 'unknown' }}
+            {{ t('report.source', source=interpretation.provider or t('common.unknown')) }}
         </p>
     </div>
     {% endif %}
 
     <div class="card">
-        <h2>任务概览</h2>
+        <h2>{{ t('report.overview') }}</h2>
         <div class="info-row">
             <div class="info-item">
-                <div class="info-label">任务 ID</div>
+                <div class="info-label">{{ t('report.run_id') }}</div>
                 <div class="info-value">{{ run_id }}</div>
             </div>
             <div class="info-item">
-                <div class="info-label">状态</div>
+                <div class="info-label">{{ t('report.status') }}</div>
                 <div class="info-value">
                     <span class="status-badge status-{{ status }}">{{ status }}</span>
                 </div>
             </div>
             <div class="info-item">
-                <div class="info-label">Preset</div>
+                <div class="info-label">{{ t('report.preset') }}</div>
                 <div class="info-value">{{ preset }}</div>
             </div>
             <div class="info-item">
-                <div class="info-label">主要指标</div>
+                <div class="info-label">{{ t('report.primary_metric') }}</div>
                 <div class="info-value">{{ primary_metric or '-' }}</div>
             </div>
             <div class="info-item">
-                <div class="info-label">随机种子</div>
+                <div class="info-label">{{ t('report.seed') }}</div>
                 <div class="info-value">{{ seed if seed is not none else '-' }}</div>
             </div>
         </div>
         <div class="info-row" style="margin-top: 20px;">
             <div class="info-item">
-                <div class="info-label">样本数</div>
+                <div class="info-label">{{ t('report.samples') }}</div>
                 <div class="info-value">{{ metadata.n_samples }}</div>
             </div>
             <div class="info-item">
-                <div class="info-label">特征数</div>
+                <div class="info-label">{{ t('report.features') }}</div>
                 <div class="info-value">{{ metadata.n_features }}</div>
             </div>
             <div class="info-item">
-                <div class="info-label">内存占用</div>
+                <div class="info-label">{{ t('report.memory') }}</div>
                 <div class="info-value">{{ "%.2f"|format(metadata.memory_mb) }} MB</div>
             </div>
         </div>
     </div>
 
     <div class="card">
-        <h2>数据质量摘要</h2>
+        <h2>{{ t('report.quality_summary') }}</h2>
         <div class="metric-grid">
             <div class="metric-card">
-                <div class="metric-name">综合得分</div>
+                <div class="metric-name">{{ t('report.overall_score') }}</div>
                 <div class="metric-value">{{ "%.2f"|format((quality.overall_score or 0) * 100) }}%</div>
             </div>
             <div class="metric-card">
-                <div class="metric-name">样本数</div>
+                <div class="metric-name">{{ t('report.samples') }}</div>
                 <div class="metric-value">{{ quality.n_rows or metadata.n_samples }}</div>
             </div>
             <div class="metric-card">
-                <div class="metric-name">特征数</div>
+                <div class="metric-name">{{ t('report.features') }}</div>
                 <div class="metric-value">{{ quality.n_features or metadata.n_features }}</div>
             </div>
         </div>
@@ -225,9 +225,9 @@
         <table>
             <thead>
                 <tr>
-                    <th>维度</th>
-                    <th>得分</th>
-                    <th>关键问题</th>
+                    <th>{{ t('report.dimension') }}</th>
+                    <th>{{ t('report.score') }}</th>
+                    <th>{{ t('report.key_issues') }}</th>
                 </tr>
             </thead>
             <tbody>
@@ -239,19 +239,19 @@
                     <td>{{ "%.2f"|format((dim_info.score or 0) * 100) }}%</td>
                     <td>
                         {% if dim == 'completeness' and dim_info.columns_with_missing %}
-                            缺失列: {{ dim_info.columns_with_missing[:5]|join(', ') }}
+                            {{ t('report.missing_columns', columns=dim_info.columns_with_missing[:5]|join(', ')) }}
                         {% elif dim == 'consistency' and dim_info.constant_columns %}
-                            常量列: {{ dim_info.constant_columns[:5]|join(', ') }}
+                            {{ t('report.constant_columns', columns=dim_info.constant_columns[:5]|join(', ')) }}
                         {% elif dim == 'accuracy' and dim_info.outlier_summary %}
-                            异常值列: {{ dim_info.outlier_summary.keys()|list|join(', ') }}
+                            {{ t('report.outlier_columns', columns=dim_info.outlier_summary.keys()|list|join(', ')) }}
                         {% elif dim == 'timeliness' and dim_info.future_date_issues %}
-                            未来日期: {{ dim_info.future_date_issues|length }} 处
+                            {{ t('report.future_dates', count=dim_info.future_date_issues|length) }}
                         {% elif dim == 'uniqueness' and dim_info.duplicated_rows %}
-                            重复行: {{ dim_info.duplicated_rows }}
+                            {{ t('report.duplicate_rows', count=dim_info.duplicated_rows) }}
                         {% elif dim == 'validity' and dim_info.rare_category_issues %}
-                            稀有类别列: {{ dim_info.rare_category_issues|map(attribute='column')|list|join(', ') }}
+                            {{ t('report.rare_category_columns', columns=dim_info.rare_category_issues|map(attribute='column')|list|join(', ')) }}
                         {% else %}
-                            无明显问题
+                            {{ t('report.no_issues') }}
                         {% endif %}
                     </td>
                 </tr>
@@ -262,7 +262,7 @@
         {% endif %}
         {% if quality.warnings %}
         <div style="margin-top: 16px;">
-            <div class="info-label">质量警告</div>
+            <div class="info-label">{{ t('report.quality_warnings') }}</div>
             <ul style="margin: 8px 0; padding-left: 20px; color: #666;">
                 {% for warning in quality.warnings %}
                 <li>{{ warning }}</li>
@@ -273,31 +273,31 @@
     </div>
 
     <div class="card">
-        <h2>训练策略</h2>
+        <h2>{{ t('report.training_strategy') }}</h2>
         <div class="info-row">
             <div class="info-item">
-                <div class="info-label">数据规模</div>
+                <div class="info-label">{{ t('report.data_scale') }}</div>
                 <div class="info-value">{{ strategy.data_size_label }}</div>
             </div>
             <div class="info-item">
-                <div class="info-label">Preset</div>
+                <div class="info-label">{{ t('report.preset') }}</div>
                 <div class="info-value">{{ strategy.preset }}</div>
             </div>
             <div class="info-item">
-                <div class="info-label">时间限制</div>
-                <div class="info-value">{{ strategy.time_limit_seconds if strategy.time_limit_seconds is not none else '无限制' }}</div>
+                <div class="info-label">{{ t('report.time_limit') }}</div>
+                <div class="info-value">{{ strategy.time_limit_seconds if strategy.time_limit_seconds is not none else t('common.unlimited') }}</div>
             </div>
             <div class="info-item">
-                <div class="info-label">最大模型数</div>
+                <div class="info-label">{{ t('report.max_models') }}</div>
                 <div class="info-value">{{ strategy.max_models }}</div>
             </div>
             <div class="info-item">
-                <div class="info-label">Stacking</div>
-                <div class="info-value">{% if strategy.auto_stack %}开{% else %}关{% endif %}</div>
+                <div class="info-label">{{ t('report.stacking') }}</div>
+                <div class="info-value">{% if strategy.auto_stack %}{{ t('report.on') }}{% else %}{{ t('report.off') }}{% endif %}</div>
             </div>
         </div>
         <div style="margin-top: 16px;">
-            <div class="info-label">策略依据</div>
+            <div class="info-label">{{ t('report.strategy_reasoning') }}</div>
             <ul style="margin: 8px 0; padding-left: 20px; color: #666;">
                 {% for item in strategy.rationale %}
                 <li>{{ item }}</li>
@@ -307,19 +307,19 @@
     </div>
 
     <div class="card">
-        <h2>采样策略</h2>
+        <h2>{{ t('report.sampling_strategy') }}</h2>
         <div class="info-row">
             <div class="info-item">
-                <div class="info-label">采样方法</div>
+                <div class="info-label">{{ t('report.sampling_method') }}</div>
                 <div class="info-value">{{ strategy.sampling.method if strategy.sampling else 'none' }}</div>
             </div>
             <div class="info-item">
-                <div class="info-label">不平衡比例</div>
+                <div class="info-label">{{ t('report.imbalance_ratio') }}</div>
                 <div class="info-value">{{ "%.2f"|format(strategy.sampling.imbalance_ratio) if strategy.sampling and strategy.sampling.imbalance_ratio is not none else '-' }}</div>
             </div>
         </div>
         <div style="margin-top: 16px;">
-            <div class="info-label">策略依据</div>
+            <div class="info-label">{{ t('report.strategy_reasoning') }}</div>
             <ul style="margin: 8px 0; padding-left: 20px; color: #666;">
                 {% for item in strategy.sampling.rationale %}
                 <li>{{ item }}</li>
@@ -329,33 +329,33 @@
     </div>
 
     <div class="card">
-        <h2>特征工程策略</h2>
+        <h2>{{ t('report.feature_engineering_strategy') }}</h2>
         <div class="info-row">
             <div class="info-item">
-                <div class="info-label">异常值处理</div>
+                <div class="info-label">{{ t('report.outlier_handling') }}</div>
                 <div class="info-value">{{ strategy.preprocessing.outlier_strategy or 'none' }}</div>
             </div>
             <div class="info-item">
-                <div class="info-label">数值缩放</div>
+                <div class="info-label">{{ t('report.numeric_scaling') }}</div>
                 <div class="info-value">{{ strategy.preprocessing.scaler_type or 'none' }}</div>
             </div>
             <div class="info-item">
-                <div class="info-label">稀有类别阈值</div>
+                <div class="info-label">{{ t('report.rare_category_threshold') }}</div>
                 <div class="info-value">{{ strategy.preprocessing.rare_category_threshold }}</div>
             </div>
             <div class="info-item">
-                <div class="info-label">时间周期特征</div>
-                <div class="info-value">{% if strategy.preprocessing.datetime_cyclical %}开{% else %}关{% endif %}</div>
+                <div class="info-label">{{ t('report.time_period_features') }}</div>
+                <div class="info-value">{% if strategy.preprocessing.datetime_cyclical %}{{ t('report.on') }}{% else %}{{ t('report.off') }}{% endif %}</div>
             </div>
             <div class="info-item">
-                <div class="info-label">文本 Embedding</div>
-                <div class="info-value">{% if strategy.preprocessing.text_embeddings %}开{% else %}关{% endif %}</div>
+                <div class="info-label">{{ t('report.text_embedding') }}</div>
+                <div class="info-value">{% if strategy.preprocessing.text_embeddings %}{{ t('report.on') }}{% else %}{{ t('report.off') }}{% endif %}</div>
             </div>
         </div>
     </div>
 
     <div class="card">
-        <h2>评估指标</h2>
+        <h2>{{ t('report.metrics') }}</h2>
         <div class="metric-grid">
             {% for name, value in metrics.items() %}
             {% if name not in ['extended', 'train', 'cv', 'threshold', 'ensemble_validation'] %}
@@ -370,70 +370,70 @@
 
     {% if metrics_full.cv and metrics_full.cv.cv_scores %}
     <div class="card">
-        <h2>交叉验证（完整 Pipeline）</h2>
+        <h2>{{ t('report.cross_validation') }}</h2>
         <div class="metric-grid">
             <div class="metric-card">
-                <div class="metric-name">CV 类型</div>
+                <div class="metric-name">{{ t('report.cv_type') }}</div>
                 <div class="metric-value">{{ metrics_full.cv.cv_type }}</div>
             </div>
             <div class="metric-card">
-                <div class="metric-name">折数</div>
+                <div class="metric-name">{{ t('report.cv_folds') }}</div>
                 <div class="metric-value">{{ metrics_full.cv.n_folds }}</div>
             </div>
             <div class="metric-card">
-                <div class="metric-name">CV 均值</div>
+                <div class="metric-name">{{ t('report.cv_mean') }}</div>
                 <div class="metric-value">{{ "%.4f"|format(metrics_full.cv.cv_mean) }}</div>
             </div>
             <div class="metric-card">
-                <div class="metric-name">CV 标准差</div>
+                <div class="metric-name">{{ t('report.cv_std') }}</div>
                 <div class="metric-value">{{ "%.4f"|format(metrics_full.cv.cv_std) }}</div>
             </div>
         </div>
         {% if metrics_full.cv.cv_scores %}
         <table>
             <thead>
-                <tr><th>折</th><th>分数</th></tr>
+                <tr><th>{{ t('report.fold') }}</th><th>{{ t('report.score') }}</th></tr>
             </thead>
             <tbody>
                 {% for score in metrics_full.cv.cv_scores %}
-                <tr><td>第 {{ loop.index }} 折</td><td>{{ "%.4f"|format(score) }}</td></tr>
+                <tr><td>{{ t('report.fold_score', index=loop.index) }}</td><td>{{ "%.4f"|format(score) }}</td></tr>
                 {% endfor %}
             </tbody>
         </table>
         {% endif %}
         {% if metrics_full.cv.cv_error %}
-        <p style="color: #f56c6c;">CV 计算失败: {{ metrics_full.cv.cv_error }}</p>
+        <p style="color: #f56c6c;">{{ t('report.cv_failed', msg=metrics_full.cv.cv_error) }}</p>
         {% endif %}
     </div>
     {% endif %}
 
     {% if metrics_full and (metrics_full.threshold or metrics_full.ensemble_validation) %}
     <div class="card">
-        <h2>阈值调优与集成验证</h2>
+        <h2>{{ t('report.threshold_tuning') }}</h2>
         <div class="info-row">
             {% if metrics_full.threshold %}
             <div class="info-item">
-                <div class="info-label">默认阈值</div>
+                <div class="info-label">{{ t('report.default_threshold') }}</div>
                 <div class="info-value">{{ metrics_full.threshold.default_threshold }}</div>
             </div>
             <div class="info-item">
-                <div class="info-label">最优阈值（F1）</div>
+                <div class="info-label">{{ t('report.optimal_threshold_f1') }}</div>
                 <div class="info-value">{{ "%.4f"|format(metrics_full.threshold.optimal_threshold) }}</div>
             </div>
             <div class="info-item">
-                <div class="info-label">最优 F1</div>
+                <div class="info-label">{{ t('report.optimal_f1') }}</div>
                 <div class="info-value">{{ "%.4f"|format(metrics_full.threshold.best_f1) }}</div>
             </div>
             {% endif %}
             {% if metrics_full.ensemble_validation %}
             <div class="info-item">
-                <div class="info-label">集成提升</div>
+                <div class="info-label">{{ t('report.ensemble_improvement') }}</div>
                 <div class="info-value">{{ "%.2f"|format((metrics_full.ensemble_validation.improvement_ratio or 0) * 100) }}%</div>
             </div>
             <div class="info-item">
-                <div class="info-label">集成回退</div>
+                <div class="info-label">{{ t('report.ensemble_fallback') }}</div>
                 <div class="info-value">
-                    {% if metrics_full.ensemble_validation.recommend_ensemble %}未触发{% else %}已回退单模型{% endif %}
+                    {% if metrics_full.ensemble_validation.recommend_ensemble %}{{ t('report.fallback_not_triggered') }}{% else %}{{ t('report.fallback_triggered') }}{% endif %}
                 </div>
             </div>
             {% endif %}
@@ -442,7 +442,7 @@
     {% endif %}
 
     <div class="card">
-        <h2>模型排行榜 Top 10</h2>
+        <h2>{{ t('report.leaderboard_top10') }}</h2>
         <table>
             <thead>
                 <tr>
@@ -464,7 +464,7 @@
     </div>
 
     <div class="card">
-        <h2>特征重要性 Top 20</h2>
+        <h2>{{ t('report.feature_importance_top20') }}</h2>
         <table>
             <thead>
                 <tr>
@@ -487,7 +487,7 @@
 
     {% if perm_importance %}
     <div class="card">
-        <h2>Permutation Importance Top 20（泄露检测 / 无偏重要性）</h2>
+        <h2>{{ t('report.permutation_importance_top20') }}</h2>
         <table>
             <thead>
                 <tr>
@@ -511,33 +511,33 @@
 
     {% if plots %}
     <div class="card">
-        <h2>可视化分析</h2>
+        <h2>{{ t('report.visualization') }}</h2>
         {% if plots.confusion_matrix %}
-        <h3>混淆矩阵</h3>
-        <img src="data:image/png;base64,{{ plots.confusion_matrix }}" alt="混淆矩阵" style="max-width: 100%;">
+        <h3>{{ t('report.confusion_matrix') }}</h3>
+        <img src="data:image/png;base64,{{ plots.confusion_matrix }}" alt="{{ t('report.confusion_matrix') }}" style="max-width: 100%;">
         {% endif %}
         {% if plots.feature_importance %}
-        <h3>特征重要性</h3>
-        <img src="data:image/png;base64,{{ plots.feature_importance }}" alt="特征重要性" style="max-width: 100%;">
+        <h3>{{ t('report.feature_importance') }}</h3>
+        <img src="data:image/png;base64,{{ plots.feature_importance }}" alt="{{ t('report.feature_importance') }}" style="max-width: 100%;">
         {% endif %}
         {% if plots.roc_curve %}
-        <h3>ROC 曲线</h3>
-        <img src="data:image/png;base64,{{ plots.roc_curve }}" alt="ROC 曲线" style="max-width: 100%;">
+        <h3>{{ t('report.roc_curve') }}</h3>
+        <img src="data:image/png;base64,{{ plots.roc_curve }}" alt="{{ t('report.roc_curve') }}" style="max-width: 100%;">
         {% endif %}
         {% if plots.pr_curve %}
-        <h3>PR 曲线</h3>
-        <img src="data:image/png;base64,{{ plots.pr_curve }}" alt="PR 曲线" style="max-width: 100%;">
+        <h3>{{ t('report.pr_curve') }}</h3>
+        <img src="data:image/png;base64,{{ plots.pr_curve }}" alt="{{ t('report.pr_curve') }}" style="max-width: 100%;">
         {% endif %}
         {% if plots.shap_summary %}
-        <h3>SHAP 特征重要性</h3>
-        <img src="data:image/png;base64,{{ plots.shap_summary }}" alt="SHAP" style="max-width: 100%;">
+        <h3>{{ t('report.shap_importance') }}</h3>
+        <img src="data:image/png;base64,{{ plots.shap_summary }}" alt="{{ t('report.shap_importance') }}" style="max-width: 100%;">
         {% endif %}
     </div>
     {% endif %}
 
     <div class="card">
         <p style="text-align: center; color: #999; margin: 0;">
-            由 Prefect AutoML Platform 自动生成
+            {{ t('report.generated_by') }}
         </p>
     </div>
 </body>

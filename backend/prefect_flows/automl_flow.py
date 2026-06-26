@@ -16,6 +16,7 @@ from typing import Dict, Any, Optional
 import pandas as pd
 from prefect import flow, task
 from prefect.artifacts import create_table_artifact, create_markdown_artifact
+from i18n import _, get_locale
 from prefect.cache_policies import INPUTS, TASK_SOURCE
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -64,7 +65,7 @@ def _file_cache_key(context, parameters):
 def load_data_task(file_path: str) -> pd.DataFrame:
     """加载数据任务（按文件路径+修改时间缓存）。"""
     df = load_dataframe(Path(file_path))
-    logger.info(f"数据加载完成: {df.shape}")
+    logger.info(_("flow.data_loaded", shape=df.shape))
     return df
 
 
@@ -72,7 +73,7 @@ def load_data_task(file_path: str) -> pd.DataFrame:
 def validate_schema_task(df: pd.DataFrame, target_column: str) -> pd.DataFrame:
     """校验目标列是否存在。"""
     if target_column not in df.columns:
-        raise ValueError(f"目标列 '{target_column}' 不存在")
+        raise ValueError(_("dataset.target_column_not_found", column=target_column))
     return df
 
 
@@ -80,7 +81,7 @@ def validate_schema_task(df: pd.DataFrame, target_column: str) -> pd.DataFrame:
 def analyze_metadata_task(df: pd.DataFrame, target_column: str) -> Dict[str, Any]:
     """元数据分析任务。"""
     metadata = analyze_metadata(df, target_column)
-    logger.info(f"元数据分析完成: {metadata['n_samples']} 样本, {metadata['n_features']} 特征")
+    logger.info(_("flow.metadata_analyzed", n_samples=metadata['n_samples'], n_features=metadata['n_features']))
     return metadata
 
 
@@ -88,7 +89,7 @@ def analyze_metadata_task(df: pd.DataFrame, target_column: str) -> Dict[str, Any
 def clean_data_task(df: pd.DataFrame, target_column: str) -> pd.DataFrame:
     """数据清洗任务。"""
     cleaned_df = clean_dataframe(df, target_column)
-    logger.info(f"数据清洗完成: {cleaned_df.shape}")
+    logger.info(_("flow.data_cleaned", shape=cleaned_df.shape))
     return cleaned_df
 
 
@@ -96,7 +97,7 @@ def clean_data_task(df: pd.DataFrame, target_column: str) -> pd.DataFrame:
 def engineer_features_task(df: pd.DataFrame, target_column: str) -> pd.DataFrame:
     """特征工程任务。"""
     featured_df = engineer_features(df, target_column)
-    logger.info(f"特征工程完成: {featured_df.shape}")
+    logger.info(_("flow.features_engineered", shape=featured_df.shape))
     return featured_df
 
 
@@ -125,7 +126,7 @@ def split_data_task(
     )
     train_df, val_df, test_df = result["train"], result["val"], result["test"]
     logger.info(
-        f"数据划分完成: 训练集 {train_df.shape}, 验证集 {val_df.shape}, 测试集 {test_df.shape}"
+        _("flow.data_split", train_shape=train_df.shape, val_shape=val_df.shape, test_shape=test_df.shape)
     )
     return {"train": train_df, "val": val_df, "test": test_df}
 
@@ -170,7 +171,7 @@ def build_strategy_task(
     if candidate_config.get("hyperparameters"):
         strategy_dict["hyperparameters"] = candidate_config["hyperparameters"]
 
-    logger.info(f"训练策略: {strategy_dict}")
+    logger.info(_("flow.training_strategy", strategy=strategy_dict))
     return strategy_dict
 
 
@@ -183,7 +184,7 @@ def build_sampling_strategy_task(
     """根据训练集构建采样策略。"""
     strategy = build_sampling_strategy(train_df, target_column, task_type)
     logger.info(
-        f"采样策略: method={strategy.method}, imbalance_ratio={strategy.imbalance_ratio}"
+        _("flow.sampling_strategy_built", method=strategy.method, imbalance_ratio=strategy.imbalance_ratio)
     )
     return strategy.to_dict()
 
@@ -205,8 +206,8 @@ def apply_sampling_task(
     )
     sampled_df, sample_weight = apply_sampling(train_df, target_column, strategy)
     logger.info(
-        f"采样完成: method={strategy.method}, "
-        f"original={train_df.shape}, sampled={sampled_df.shape}"
+        _("sampling.applied", method=strategy.method, old_shape=train_df.shape,
+          new_shape=sampled_df.shape, ratio=strategy.imbalance_ratio)
     )
     return {
         "sampled_train_df": sampled_df,
@@ -242,7 +243,7 @@ def train_model_task(
         strategy=strategy,
         sample_weight=sample_weight,
     )
-    logger.info(f"模型训练完成: {result['primary_metric']}")
+    logger.info(_("flow.model_trained", metric=result['primary_metric']))
     return result
 
 
@@ -292,7 +293,7 @@ def evaluate_model_task(
         leaderboard = predictor.leaderboard(silent=True)
         metrics["ensemble_validation"] = _validate_ensemble(leaderboard, None)
     except Exception as e:
-        logger.warning(f"集成验证失败: {e}")
+        logger.warning(_("training.ensemble_validation_failed", msg=e))
 
     # 训练集参考指标
     if settings.train_eval_enabled:
@@ -302,11 +303,11 @@ def evaluate_model_task(
             n_classes = train_data[target_column].nunique(dropna=True)
 
             if sample_size == 0:
-                logger.info("训练集评估已通过配置禁用（TRAIN_EVAL_SAMPLE_SIZE=0）")
+                logger.info(_("flow.train_eval_disabled"))
                 eval_train_data = None
             elif sample_size is not None and len(train_data) > sample_size:
                 eval_train_data = train_data.sample(n=sample_size, random_state=42)
-                logger.info(f"训练集评估按配置采样至 {len(eval_train_data)} 行")
+                logger.info(_("flow.train_eval_sampled", rows=len(eval_train_data)))
             elif sample_size is None and (
                 n_classes > HIGH_CARDINALITY_CLASS_THRESHOLD
                 or len(train_data) > LARGE_DATASET_ROW_THRESHOLD
@@ -314,8 +315,7 @@ def evaluate_model_task(
                 sample_size = min(DEFAULT_TRAIN_EVAL_SAMPLE_SIZE, len(train_data))
                 eval_train_data = train_data.sample(n=sample_size, random_state=42)
                 logger.info(
-                    f"训练集评估自动采样至 {len(eval_train_data)} 行"
-                    f"（n_classes={n_classes}）"
+                    _("flow.train_eval_auto_sampled", rows=len(eval_train_data), n_classes=n_classes)
                 )
 
             if eval_train_data is not None:
@@ -324,10 +324,10 @@ def evaluate_model_task(
             else:
                 metrics["train"] = {}
         except Exception as e:
-            logger.warning(f"训练集评估失败: {e}")
+            logger.warning(_("training.train_eval_failed", msg=e))
             metrics["train"] = {}
     else:
-        logger.warning("训练集评估已通过配置禁用")
+        logger.warning(_("flow.train_eval_disabled_config"))
         metrics["train"] = {}
 
     # 显式 CV 结果
@@ -340,8 +340,8 @@ def evaluate_model_task(
         json.dump(metrics, f, ensure_ascii=False, indent=2, default=str)
 
     logger.info(
-        f"模型评估完成: val={metrics['val']}, test={metrics['final']}, "
-        f"train={metrics.get('train', {})}, cv={metrics.get('cv', {})}"
+        _("flow.model_evaluated", val=metrics['val'], test=metrics['final'],
+          train=metrics.get('train', {}), cv=metrics.get('cv', {}))
     )
     return metrics
 
@@ -349,7 +349,7 @@ def evaluate_model_task(
 def _validate_ensemble(leaderboard: pd.DataFrame, primary_metric: Optional[str]) -> Dict[str, Any]:
     """检查集成是否优于单模型；若差距 <2% 则建议使用单模型。"""
     if leaderboard.empty or "model" not in leaderboard.columns:
-        return {"ensemble_used": False, "reason": "leaderboard 为空"}
+        return {"ensemble_used": False, "reason": _("flow.leaderboard_empty")}
 
     score_col = "score_val"
     if score_col not in leaderboard.columns:
@@ -362,7 +362,7 @@ def _validate_ensemble(leaderboard: pd.DataFrame, primary_metric: Optional[str])
     # 找到最佳非集成模型
     non_ensemble = sorted_lb[~sorted_lb["model"].astype(str).str.startswith("WeightedEnsemble")]
     if non_ensemble.empty:
-        return {"ensemble_used": ensemble_used, "reason": "无单模型可比较"}
+        return {"ensemble_used": ensemble_used, "reason": _("flow.no_single_model")}
 
     best_single_score = float(non_ensemble.iloc[0][score_col])
     top_score = float(top_model[score_col])
@@ -538,7 +538,7 @@ def assess_data_quality_task(
     quality_path = output_path / "quality_report.json"
     with open(quality_path, "w", encoding="utf-8") as f:
         json.dump(quality, f, ensure_ascii=False, indent=2, default=str)
-    logger.info(f"数据质量报告保存: {quality_path}, overall_score={quality.get('overall_score')}")
+    logger.info(_("flow.quality_report_saved", path=quality_path, overall_score=quality.get('overall_score')))
     return quality
 
 
@@ -562,7 +562,7 @@ def create_artifacts_task(
         create_table_artifact(
             key="leaderboard",
             table=leaderboard_df.to_dict(orient="records"),
-            description="模型排行榜",
+            description=_("report.leaderboard_top10"),
         )
 
     # 特征重要性 Artifact
@@ -574,21 +574,21 @@ def create_artifacts_task(
         create_table_artifact(
             key="feature-importance",
             table=importance_df.to_dict(orient="records"),
-            description="Top 20 特征重要性",
+            description=_("report.feature_importance_top20"),
         )
 
     # 策略 Markdown Artifact
     rationale = "\n".join(f"- {item}" for item in strategy.get("rationale", []))
     preprocessing = strategy.get("preprocessing", {})
     markdown = (
-        f"# 训练策略\n\n"
-        f"**数据规模**: {strategy.get('data_size_label')}\n\n"
-        f"**Preset**: {strategy.get('preset')}\n\n"
-        f"**主指标**: {strategy.get('primary_metric')}\n\n"
-        f"**时间限制**: {strategy.get('time_limit_seconds') if strategy.get('time_limit_seconds') is not None else '无限制'}\n\n"
-        f"**采样策略**: {sampling_strategy.get('method')}\n\n"
-        f"**决策依据**:\n{rationale}\n\n"
-        f"**预处理开关**:\n```json\n{json.dumps(preprocessing, ensure_ascii=False, indent=2)}\n```"
+        f"# {_("report.training_strategy")}\n\n"
+        f"**{_("report.data_scale")}**: {strategy.get('data_size_label')}\n\n"
+        f"**{_("report.preset")}**: {strategy.get('preset')}\n\n"
+        f"**{_("report.primary_metric")}**: {strategy.get('primary_metric')}\n\n"
+        f"**{_("report.time_limit")}**: {strategy.get('time_limit_seconds') if strategy.get('time_limit_seconds') is not None else _("common.unlimited")}\n\n"
+        f"**{_("report.sampling_strategy")}**: {sampling_strategy.get('method')}\n\n"
+        f"**{_("report.strategy_reasoning")}**:\n{rationale}\n\n"
+        f"**{_("report.preprocessing_switches")}**:\n```json\n{json.dumps(preprocessing, ensure_ascii=False, indent=2)}\n```"
     )
     create_markdown_artifact(key="training-strategy", markdown=markdown)
 
@@ -706,13 +706,15 @@ def generate_report_task(
         quality=quality,
         metrics_full=metrics,
         interpretation=interpretation,
+        locale=get_locale(),
+        t=_,
     )
 
     report_path = output_path / "report.html"
     with open(report_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    logger.info(f"HTML 报告生成完成: {report_path}")
+    logger.info(_("flow.report_generated", path=report_path))
     return str(report_path)
 
 
@@ -731,8 +733,8 @@ def fit_preprocessor_task(
     )
     preprocessor.fit(train_df)
     logger.info(
-        f"预处理器拟合完成: 对数变换列={preprocessor.log_transform_cols}, "
-        f"最终特征数={len(preprocessor.feature_columns)}"
+        _("flow.preprocessor_fitted", log_cols=preprocessor.log_transform_cols,
+          n_features=len(preprocessor.feature_columns))
     )
     return preprocessor
 
@@ -745,7 +747,7 @@ def transform_data_task(
 ) -> pd.DataFrame:
     """使用已拟合的预处理器转换数据。"""
     transformed = preprocessor.transform(df)
-    logger.info(f"{dataset_label} 转换完成: {transformed.shape}")
+    logger.info(_("flow.data_transformed", label=dataset_label, shape=transformed.shape))
     return transformed
 
 
@@ -763,7 +765,7 @@ def persist_preprocessor_task(
     save_feature_columns(output_dir, preprocessor.feature_columns)
     feature_columns_path = output_path / "feature_columns.json"
 
-    logger.info(f"预处理器与特征列已保存: {pipeline_path}, {feature_columns_path}")
+    logger.info(_("flow.preprocessor_saved", pipeline_path=pipeline_path, feature_columns_path=feature_columns_path))
     return {
         "pipeline_path": str(pipeline_path),
         "feature_columns_path": str(feature_columns_path),
@@ -789,8 +791,8 @@ def cross_validate_task(
         cv_type=strategy.get("validation_strategy", {}).get("cv_type"),
     )
     logger.info(
-        f"交叉验证完成: cv_type={cv_results.get('cv_type')}, "
-        f"mean={cv_results.get('cv_mean')}, std={cv_results.get('cv_std')}"
+        _("flow.cross_validation_done", cv_type=cv_results.get('cv_type'),
+          mean=cv_results.get('cv_mean'), std=cv_results.get('cv_std'))
     )
     return cv_results
 
@@ -830,14 +832,14 @@ async def generate_business_interpretation_task(
             strategy=strategy,
         )
     except Exception as e:
-        logger.warning(f"业务解读生成失败: {e}")
+        logger.warning(_("flow.business_interpretation_failed", msg=e))
         return None
 
     interpretation_path = output_path / "business_interpretation.json"
     with open(interpretation_path, "w", encoding="utf-8") as f:
         json.dump(interpretation, f, ensure_ascii=False, indent=2, default=str)
 
-    logger.info(f"业务解读已保存: {interpretation_path}")
+    logger.info(_("flow.interpretation_saved", path=interpretation_path))
     return interpretation
 
 
@@ -870,7 +872,7 @@ def automl_pipeline(
         primary_metric: 主要评估指标
         candidate_config: Agent 推荐的候选配置（可选）
     """
-    logger.info(f"启动 AutoML Pipeline: {file_path}")
+    logger.info(_("flow.pipeline_started", file_path=file_path))
 
     # 1. 加载数据
     df = load_data_task(file_path)
@@ -879,15 +881,15 @@ def automl_pipeline(
     if target_column is None or task_type is None:
         inferred_target, confidence = infer_target_column(df, hint=target_column)
         if inferred_target is None:
-            raise ValueError("无法自动推断目标列，请显式指定 target_column")
+            raise ValueError(_("data.cannot_infer_target"))
         target_column = inferred_target
-        logger.info(f"自动推断目标列: {target_column} (置信度 {confidence:.2f})")
+        logger.info(_("training.inferred_target", column=target_column, confidence=f"{confidence:.2f}"))
 
     if task_type is None:
         task_type = infer_task_type(df[target_column])
-        logger.info(f"自动推断任务类型: {task_type}")
+        logger.info(_("training.inferred_task_type", task_type=task_type))
 
-    logger.info(f"使用目标列/任务: {target_column} / {task_type}")
+    logger.info(_("flow.using_target_task", target=target_column, task=task_type))
 
     # 2. 校验 Schema
     df = validate_schema_task(df, target_column)
@@ -899,7 +901,7 @@ def automl_pipeline(
     try:
         quality = assess_data_quality_task(df, target_column, output_dir)
     except Exception as e:
-        logger.warning(f"数据质量评估失败，继续主流程: {e}")
+        logger.warning(_("flow.quality_assessment_failed", msg=e))
         quality = {}
 
     # 4. 策略路由（数据驱动）
@@ -944,7 +946,7 @@ def automl_pipeline(
             cleaning_rules=effective_cleaning_rules,
         )
     except Exception as e:
-        logger.warning(f"交叉验证失败，继续主流程: {e}")
+        logger.warning(_("flow.cross_validation_failed", msg=e))
         cv_results = {}
 
     # 6. 拟合并应用预处理 Pipeline（仅在训练集上 fit，再 transform 全量数据）
@@ -957,25 +959,25 @@ def automl_pipeline(
     train_df = transform_data_task(
         preprocessor=preprocessor,
         df=train_df_raw,
-        dataset_label="训练集",
+        dataset_label=_("flow.train_dataset"),
     )
     val_df = transform_data_task(
         preprocessor=preprocessor,
         df=val_df_raw,
-        dataset_label="验证集",
+        dataset_label=_("flow.val_dataset"),
     )
     test_df = transform_data_task(
         preprocessor=preprocessor,
         df=test_df_raw,
-        dataset_label="测试集",
+        dataset_label=_("flow.test_dataset"),
     )
     persist_preprocessor_task(
         preprocessor=preprocessor,
         output_dir=output_dir,
     )
     logger.info(
-        f"预处理完成: 训练集 {train_df.shape}, 验证集 {val_df.shape}, 测试集 {test_df.shape}, "
-        f"特征列={preprocessor.feature_columns}"
+        _("flow.preprocessing_done", train_shape=train_df.shape, val_shape=val_df.shape,
+          test_shape=test_df.shape, features=preprocessor.feature_columns)
     )
 
     # 7. 条件采样（仅在训练集上）
@@ -1023,7 +1025,7 @@ def automl_pipeline(
             quality=quality,
         )
     except Exception as e:
-        logger.warning(f"Prefect Artifact 创建失败，继续主流程: {e}")
+        logger.warning(_("flow.artifact_creation_failed", msg=e))
 
     # 11. 生成 HTML 报告（可选，失败不影响主流程）
     report_path = None
@@ -1041,7 +1043,7 @@ def automl_pipeline(
             interpretation=interpretation,
         )
     except Exception as e:
-        logger.warning(f"HTML 报告生成失败，继续主流程: {e}")
+        logger.warning(_("flow.report_generation_failed", msg=e))
 
     return {
         "status": "completed",

@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
+from i18n import _
 from models import Dataset
 from schemas import CleaningRules
 from services.data_service import load_dataframe
@@ -64,14 +65,14 @@ async def parse_intent_endpoint(
         result = await db.execute(select(Dataset).where(Dataset.id == request.dataset_id))
         dataset = result.scalar_one_or_none()
         if not dataset:
-            raise HTTPException(status_code=404, detail="数据集不存在")
+            raise HTTPException(status_code=404, detail=_("dataset.not_found"))
         if dataset.file_path:
             try:
                 df_sample = load_dataframe(dataset.file_path).head(5)
             except Exception as e:
                 raise HTTPException(
                     status_code=500,
-                    detail=f"读取数据集样例失败: {str(e)}",
+                    detail=_("dataset.sample_read_failed", msg=str(e)),
                 )
 
     parsed = await parse_intent(
@@ -96,12 +97,12 @@ async def extract_rules_endpoint(
         result = await db.execute(select(Dataset).where(Dataset.id == request.dataset_id))
         dataset = result.scalar_one_or_none()
         if not dataset:
-            raise HTTPException(status_code=404, detail="数据集不存在")
+            raise HTTPException(status_code=404, detail=_("dataset.not_found"))
         if dataset.file_path:
             try:
                 df_sample = load_dataframe(dataset.file_path).head(5)
             except Exception as e:
-                raise HTTPException(status_code=500, detail=f"读取数据集样例失败: {str(e)}")
+                raise HTTPException(status_code=500, detail=_("dataset.sample_read_failed", msg=str(e)))
 
     rules = await extract_business_rules(
         query=request.query,
@@ -120,14 +121,14 @@ async def infer_schema_endpoint(
     result = await db.execute(select(Dataset).where(Dataset.id == request.dataset_id))
     dataset = result.scalar_one_or_none()
     if not dataset:
-        raise HTTPException(status_code=404, detail="数据集不存在")
+        raise HTTPException(status_code=404, detail=_("dataset.not_found"))
     if not dataset.file_path:
-        raise HTTPException(status_code=500, detail="数据集没有文件路径")
+        raise HTTPException(status_code=500, detail=_("dataset.no_file_path"))
 
     try:
         df_sample = load_dataframe(dataset.file_path).head(10)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"读取数据集失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=_("dataset.read_failed", msg=str(e)))
 
     return await infer_schema_with_llm(
         df_sample=df_sample,

@@ -3,6 +3,7 @@
 // See LICENSE for details.
 
 import axios from 'axios'
+import { getLocale } from '@/i18n'
 
 // 默认走前端服务器（vite dev proxy / nginx / 同端口网关）的 /api 路径
 // 如需独立域名部署，可通过 VITE_API_BASE_URL 覆盖
@@ -11,6 +12,11 @@ const baseURL = import.meta.env.VITE_API_BASE_URL || '/api'
 const api = axios.create({
   baseURL,
   timeout: 30000,
+})
+
+api.interceptors.request.use((config) => {
+  config.headers['Accept-Language'] = getLocale()
+  return config
 })
 
 api.interceptors.response.use(

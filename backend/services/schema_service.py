@@ -17,6 +17,8 @@ import warnings
 
 import pandas as pd
 
+from i18n import _
+
 
 class FieldType(str, Enum):
     """支持的字段类型。"""
@@ -256,7 +258,7 @@ def validate_against_schema(df: pd.DataFrame, schema: DatasetSchema) -> list[str
     schema_field_names = {f.name for f in schema.fields}
     missing = schema_field_names - set(df.columns)
     if missing:
-        errors.append(f"缺少必填字段: {sorted(missing)}")
+        errors.append(_("preprocessing.missing_required_fields", fields=sorted(missing)))
 
     for field_schema in schema.fields:
         if field_schema.name not in df.columns:
@@ -266,7 +268,7 @@ def validate_against_schema(df: pd.DataFrame, schema: DatasetSchema) -> list[str
 
         # 检查非空约束
         if not field_schema.nullable and series.isnull().any():
-            errors.append(f"字段 '{field_schema.name}' 不允许为空，但存在空值")
+            errors.append(_("preprocessing.field_not_nullable", field=field_schema.name))
 
         # 检查类型兼容性
         if field_schema.field_type in (
@@ -275,7 +277,7 @@ def validate_against_schema(df: pd.DataFrame, schema: DatasetSchema) -> list[str
             FieldType.CATEGORICAL,
         ):
             if not pd.api.types.is_numeric_dtype(series) and not _is_string_like(series):
-                errors.append(f"字段 '{field_schema.name}' 类型不匹配，期望数值或可解析为数值")
+                errors.append(_("preprocessing.field_type_mismatch", field=field_schema.name))
 
         # 检查数值范围
         constraints = field_schema.constraints
@@ -287,14 +289,24 @@ def validate_against_schema(df: pd.DataFrame, schema: DatasetSchema) -> list[str
                     and numeric_series.min() < constraints.min_value
                 ):
                     errors.append(
-                        f"字段 '{field_schema.name}' 最小值 {numeric_series.min()} 低于允许范围 {constraints.min_value}"
+                        _(
+                            "preprocessing.field_min_violated",
+                            field=field_schema.name,
+                            min=numeric_series.min(),
+                            limit=constraints.min_value,
+                        )
                     )
                 if (
                     constraints.max_value is not None
                     and numeric_series.max() > constraints.max_value
                 ):
                     errors.append(
-                        f"字段 '{field_schema.name}' 最大值 {numeric_series.max()} 超过允许范围 {constraints.max_value}"
+                        _(
+                            "preprocessing.field_max_violated",
+                            field=field_schema.name,
+                            max=numeric_series.max(),
+                            limit=constraints.max_value,
+                        )
                     )
             except Exception:
                 pass

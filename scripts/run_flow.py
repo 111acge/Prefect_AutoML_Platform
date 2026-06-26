@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.join(project_root, "backend"))
 # 必须在导入 prefect 前设置
 os.environ.setdefault("PREFECT_API_URL", "")
 
+from i18n import set_locale  # noqa: E402
 from prefect_flows.automl_flow import automl_pipeline  # noqa: E402
 
 
@@ -63,6 +64,9 @@ def main():
         help="关闭高级特征工程（仅保留清洗、填充、对数变换）",
     )
     args = parser.parse_args()
+
+    # 同步父进程传递的语言设置
+    set_locale(os.environ.get("APP_LOCALE", "zh-CN"))
 
     try:
         result = automl_pipeline(

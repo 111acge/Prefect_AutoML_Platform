@@ -21,6 +21,7 @@ import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
 from config import settings
+from i18n import _, get_locale
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +128,7 @@ class IntentConfig(BaseModel):
             return v
         v = v.strip().lower()
         if v not in _TASK_TYPES:
-            raise ValueError(f"不支持的任务类型: {v}")
+            raise ValueError(_("llm.unsupported_task_type", type=v))
         return v
 
     @field_validator("primary_metric")
@@ -137,7 +138,7 @@ class IntentConfig(BaseModel):
             return v
         v = v.strip().lower()
         if v not in _METRICS:
-            raise ValueError(f"不支持的评估指标: {v}")
+            raise ValueError(_("llm.unsupported_metric", metric=v))
         return v
 
     @field_validator("preset")
@@ -147,7 +148,7 @@ class IntentConfig(BaseModel):
             return "auto"
         v = v.strip().lower()
         if v not in _PRESETS:
-            raise ValueError(f"不支持的 preset: {v}")
+            raise ValueError(_("llm.unsupported_preset", preset=v))
         return v
 
 
@@ -179,12 +180,12 @@ async def parse_intent(
 
     # 未安装 openai 库时直接降级
     if not _OPENAI_AVAILABLE:
-        logger.warning("openai 库未安装，LLM 意图解析降级到规则引擎")
+        logger.warning(_("llm.intent_openai_missing"))
         return _rule_based_parse(query, df_sample)
 
     providers = _resolve_providers(provider)
     if not providers:
-        logger.warning("未配置任何 LLM API 密钥，降级到规则引擎")
+        logger.warning(_("llm.intent_no_key"))
         return _rule_based_parse(query, df_sample)
 
     messages = _build_messages(query, df_sample)
@@ -203,13 +204,13 @@ async def parse_intent(
             merged = _merge_with_rule_fallback(parsed, query, df_sample)
             return IntentConfig(**merged)
         except asyncio.TimeoutError:
-            logger.warning("LLM 提供商 %s 调用超时", prov)
+            logger.warning(_("llm.intent_provider_timeout", provider=prov))
             last_error = asyncio.TimeoutError(f"{prov} timeout")
         except Exception as e:  # noqa: BLE001
-            logger.warning("LLM 提供商 %s 调用失败: %s", prov, e)
+            logger.warning(_("llm.intent_provider_failed", provider=prov, msg=e))
             last_error = e
 
-    logger.warning("所有 LLM 提供商均失败，降级到规则引擎; 最后错误: %s", last_error)
+    logger.warning(_("llm.intent_all_failed", last_error=last_error))
     return _rule_based_parse(query, df_sample)
 
 
@@ -248,7 +249,7 @@ async def extract_business_rules(
             rules["provider"] = prov
             return rules
         except Exception as e:  # noqa: BLE001
-            logger.warning("LLM 规则提取失败 (%s): %s", prov, e)
+            logger.warning(_("llm.rules_failed", provider=prov, msg=e))
 
     return _rule_based_extract_rules(query, df_sample)
 
@@ -288,7 +289,7 @@ async def infer_schema_with_llm(
                 if valid:
                     return valid
         except Exception as e:  # noqa: BLE001
-            logger.warning("LLM Schema 推断失败 (%s): %s", prov, e)
+            logger.warning(_("llm.schema_failed", provider=prov, msg=e))
 
     return rule_schema
 
@@ -306,11 +307,11 @@ def _resolve_providers(provider: str) -> List[str]:
     if provider and provider.lower() != "auto":
         prov = provider.lower()
         if prov not in _PROVIDER_CONFIG and prov not in _DYNAMIC_SUPPORTED_PROVIDERS:
-            logger.warning("未知 LLM 提供商: %s，将尝试 auto", prov)
+            logger.warning(_("llm.unknown_provider_log", provider=prov))
         elif _get_api_key(prov):
             return [prov]
         else:
-            logger.warning("LLM 提供商 %s 未配置 API 密钥", prov)
+            logger.warning(_("llm.provider_not_configured_log", provider=prov))
 
     # 动态 provider 优先级最高
     if dynamic_provider and _get_api_key(dynamic_provider):
@@ -343,12 +344,12 @@ def _get_api_key(provider: str) -> Optional[str]:
 async def _call_provider(provider: str, messages: List[Dict[str, str]]) -> str:
     """调用指定 OpenAI 兼容端点。"""
     if not _OPENAI_AVAILABLE or AsyncOpenAI is None:
-        raise RuntimeError("openai 库未安装，无法调用 LLM")
+        raise RuntimeError(_("llm.openai_not_installed_for_llm"))
 
     cfg = _provider_config(provider)
     api_key = _get_api_key(provider)
     if not api_key:
-        raise RuntimeError(f"未配置 {provider} API 密钥")
+        raise RuntimeError(_("llm.provider_not_configured", provider=provider))
 
     client_kwargs: Dict[str, Any] = {"api_key": api_key}
     if cfg.get("base_url"):
@@ -375,20 +376,7 @@ async def _call_provider(provider: str, messages: List[Dict[str, str]]) -> str:
 
 def _build_messages(query: str, df_sample: Optional[pd.DataFrame]) -> List[Dict[str, str]]:
     """构造 LLM 对话消息。"""
-    system_prompt = (
-        "你是一个 AutoML 平台的意图解析助手。用户会用自然语言描述他想训练的机器学习任务，"
-        "你需要提取出以下字段并返回严格 JSON（不要 Markdown 代码块）：\n"
-        "- target_column: 目标列名称（字符串，必须与数据集列名一致）\n"
-        "- task_type: 任务类型，只能是 binary_classification / multiclass_classification / regression\n"
-        "- primary_metric: 主要评估指标，可选值包括 accuracy, f1, f1_macro, f1_micro, precision, recall, "
-        "roc_auc, log_loss, mcc, root_mean_squared_error, mean_squared_error, mean_absolute_error, r2, auc_pr\n"
-        "- time_budget_minutes: 训练时间预算（分钟，0.1-180 之间的数字；null 表示不限制）\n"
-        "- max_models: 最多尝试模型数（1-200 之间的整数）\n"
-        "- preset: AutoGluon preset，可选 auto / best_quality / high_quality / good_quality / medium_quality / fast_training\n"
-        "- confidence: 你对解析结果的置信度（0.0-1.0）\n"
-        "- reasoning: 简短解释你的推断依据\n"
-        "如果某个字段无法从用户描述中确定，使用 null。不要编造列名。"
-    )
+    system_prompt = _("llm_prompt.intent_system")
 
     sample_text = ""
     if df_sample is not None and not df_sample.empty:
@@ -396,7 +384,7 @@ def _build_messages(query: str, df_sample: Optional[pd.DataFrame]) -> List[Dict[
         columns = df_sample.columns.tolist()
         sample_text = f"\n数据集列名: {columns}\n前 3 行样例: {json.dumps(preview, ensure_ascii=False, default=str)}"
 
-    user_prompt = f"用户描述: {query}{sample_text}\n请返回 JSON:"
+    user_prompt = _("llm_prompt.intent_user", query=query, sample_text=sample_text)
 
     return [
         {"role": "system", "content": system_prompt},
@@ -405,20 +393,11 @@ def _build_messages(query: str, df_sample: Optional[pd.DataFrame]) -> List[Dict[
 
 
 def _build_rule_extraction_messages(query: str, df_sample: Optional[pd.DataFrame]) -> List[Dict[str, str]]:
-    system_prompt = (
-        "你是数据清洗规则提取助手。请从用户描述中提取结构化清洗规则并返回严格 JSON：\n"
-        "- drop_columns: 要删除的列名列表\n"
-        "- value_constraints: 列表，每项包含 column、min_value、max_value\n"
-        "- numeric_impute_strategy: median / mean / constant\n"
-        "- numeric_impute_constant: 数值常数\n"
-        "- categorical_impute_strategy: mode / constant\n"
-        "- categorical_impute_constant: 字符串常数\n"
-        "如果某项不存在，使用 null 或空列表。不要 Markdown 代码块。"
-    )
+    system_prompt = _("llm_prompt.cleaning_rules_system")
     sample_text = ""
     if df_sample is not None and not df_sample.empty:
         sample_text = f"\n数据集列名: {df_sample.columns.tolist()}"
-    user_prompt = f"用户描述: {query}{sample_text}\n请返回 JSON:"
+    user_prompt = _("llm_prompt.cleaning_rules_user", query=query, sample_text=sample_text)
     return [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
@@ -426,17 +405,13 @@ def _build_rule_extraction_messages(query: str, df_sample: Optional[pd.DataFrame
 
 
 def _build_schema_inference_messages(df_sample: pd.DataFrame) -> List[Dict[str, str]]:
-    system_prompt = (
-        "你是 Schema 推断助手。请根据数据集样例推断每个字段的语义并返回严格 JSON：\n"
-        "- fields: 列表，每项包含 name、field_type（numeric/categorical/binary/text/datetime/id）、"
-        "role（feature/target/id/timestamp）、constraints（min_value/max_value/allowed_values 等）\n"
-        "不要 Markdown 代码块。"
-    )
+    system_prompt = _("llm_prompt.schema_system")
     preview = df_sample.head(3).to_dict(orient="records")
-    user_prompt = (
-        f"列名: {df_sample.columns.tolist()}\n"
-        f"前 3 行: {json.dumps(preview, ensure_ascii=False, default=str)}\n"
-        "请返回 JSON:"
+    columns = df_sample.columns.tolist()
+    user_prompt = _(
+        "llm_prompt.schema_user",
+        columns=columns,
+        preview=json.dumps(preview, ensure_ascii=False, default=str),
     )
     return [
         {"role": "system", "content": system_prompt},
@@ -513,7 +488,7 @@ def _rule_based_parse(query: str, df_sample: Optional[pd.DataFrame]) -> IntentCo
     # 5. preset
     preset = _infer_preset(q)
 
-    reasoning = "规则引擎推断：基于关键词与数据集样例"
+    reasoning = _("intent.rule_based_reasoning")
     confidence = 0.5
 
     return IntentConfig(

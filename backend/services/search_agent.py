@@ -24,6 +24,7 @@ from sqlalchemy import select
 from database import AsyncSessionLocal
 from models import Dataset, Experiment, Trial
 from schemas import CandidateConfig, ExperimentCreate, CleaningRules
+from i18n import _, get_locale
 from services.llm_client import call_llm_for_json
 from services.llm_strategy_service import recommend_candidates
 
@@ -71,7 +72,7 @@ def _read_val_score(output_dir: str, metric: str) -> Optional[float]:
             value = val_metrics.get("score_val") or next(iter(val_metrics.values()), None)
         return float(value) if value is not None else None
     except Exception as e:
-        logger.warning(f"读取验证集指标失败 ({output_dir}): {e}")
+        logger.warning(_("llm.search.read_val_score_failed", path=output_dir, msg=e))
         return None
 
 
@@ -89,7 +90,7 @@ def _read_test_score(output_dir: str, metric: str) -> Optional[float]:
             value = final_metrics.get("score_val") or next(iter(final_metrics.values()), None)
         return float(value) if value is not None else None
     except Exception as e:
-        logger.warning(f"读取测试集指标失败 ({output_dir}): {e}")
+        logger.warning(_("llm.search.read_test_score_failed", path=output_dir, msg=e))
         return None
 
 
@@ -168,7 +169,7 @@ async def _update_trial(trial_id: str, run_id: str, output_dir: str, status: str
         result = await db.execute(select(Trial).where(Trial.id == trial_id))
         trial = result.scalar_one_or_none()
         if trial is None:
-            logger.warning(f"Trial {trial_id} 不存在，无法更新")
+            logger.warning(_("llm.search.trial_not_found", trial_id=trial_id))
             return None
         trial.run_id = run_id
         trial.status = status
@@ -186,21 +187,18 @@ def _build_reflection_prompt(
     primary_metric: str,
     history: List[Dict[str, Any]],
 ) -> List[Dict[str, str]]:
-    system_prompt = (
-        "你是 AutoML 搜索 Agent。请根据已跑候选的结果，推荐下一批更优的候选配置。\n"
-        "输出严格 JSON，顶层字段为:\n"
-        "- candidates: 候选配置列表（1~3 个），字段与初始化推荐一致\n\n"
-        "请重点关注:\n"
-        "- 如果某 preset 表现好，可以推荐其变体（更长预算、更大/更小 max_models）\n"
-        "- 如果训练失败/OOM，推荐更轻量的配置\n"
-        "- 如果特征工程关闭后表现更好，可以继续关闭\n"
-        "- 给出 reasoning 说明调整原因"
+    system_prompt = _("llm_prompt.search_agent_system")
+    metric_direction = (
+        _("llm_prompt.metric_direction_higher_better")
+        if _is_higher_better(primary_metric)
+        else _("llm_prompt.metric_direction_lower_better")
     )
-    user_prompt = (
-        f"任务类型: {task_type}\n"
-        f"主指标: {primary_metric} ({'越大越好' if _is_higher_better(primary_metric) else '越小越好'})\n"
-        f"历史结果: {json.dumps(history, ensure_ascii=False, default=str)}\n"
-        "请推荐下一批候选配置:"
+    user_prompt = _(
+        "llm_prompt.search_agent_user",
+        task_type=task_type,
+        primary_metric=primary_metric,
+        metric_direction=metric_direction,
+        history=json.dumps(history, ensure_ascii=False, default=str),
     )
     return [
         {"role": "system", "content": system_prompt},
@@ -236,10 +234,10 @@ async def _propose_next_candidates(
                     )
                 candidates.append(CandidateConfig(**raw))
             except Exception as e:
-                logger.warning(f"反思阶段候选配置解析失败: {e}; raw={raw}")
+                logger.warning(_("llm.search.reflection_parse_failed", msg=e, raw=raw))
         return candidates
     except Exception as e:
-        logger.warning(f"LLM 反思推荐失败: {e}")
+        logger.warning(_("llm.search.reflection_failed", msg=e))
         return []
 
 
@@ -266,13 +264,13 @@ async def run_experiment(
         result = await db.execute(select(Dataset).where(Dataset.id == dataset_id))
         dataset = result.scalar_one_or_none()
         if dataset is None:
-            raise ValueError("数据集不存在")
+            raise ValueError(_("dataset.not_found"))
 
         if experiment_id:
             exp_result = await db.execute(select(Experiment).where(Experiment.id == experiment_id))
             experiment = exp_result.scalar_one_or_none()
             if experiment is None:
-                raise ValueError("实验不存在")
+                raise ValueError(_("experiment.not_found"))
         else:
             experiment = Experiment(
                 dataset_id=dataset_id,
@@ -320,12 +318,17 @@ async def run_experiment(
 
     for iteration in range(max_iterations):
         if not candidates:
-            logger.info(f"第 {iteration + 1} 轮无候选，停止搜索")
+            logger.info(_("llm.search.no_candidates_stop", iteration=iteration + 1))
             break
 
         logger.info(
-            f"Experiment {experiment.id} 第 {iteration + 1}/{max_iterations} 轮，"
-            f"提交 {len(candidates)} 个候选"
+            _(
+                "llm.search.iteration_info",
+                experiment_id=experiment.id,
+                iteration=iteration + 1,
+                max_iterations=max_iterations,
+                n_candidates=len(candidates),
+            )
         )
 
         # 并发提交候选
@@ -346,7 +349,7 @@ async def run_experiment(
         for candidate, res in zip(candidates, results):
             trial = await _create_trial(experiment.id, candidate)
             if isinstance(res, Exception):
-                logger.warning(f"候选运行异常: {res}")
+                logger.warning(_("llm.search.candidate_run_exception", msg=res))
                 async with AsyncSessionLocal() as db:
                     result = await db.execute(select(Trial).where(Trial.id == trial.id))
                     trial = result.scalar_one_or_none()
@@ -389,7 +392,7 @@ async def run_experiment(
         history.extend(round_history)
 
         if no_improvement_count >= 2 * trials_per_iteration:
-            logger.info(f"连续 {no_improvement_count} 次无提升，停止搜索")
+            logger.info(_("llm.search.no_improvement_stop", count=no_improvement_count))
             break
 
         if iteration < max_iterations - 1:

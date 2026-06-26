@@ -11,6 +11,8 @@ import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 
+from i18n import _
+
 logger = logging.getLogger(__name__)
 
 
@@ -180,27 +182,38 @@ def split_data(
         if rare_classes:
             if rare_class_strategy in ("auto", "oversample"):
                 logger.warning(
-                    f"检测到稀有类别 {rare_classes}（样本数 < 2），"
-                    f"将自动复制样本以保证训练/测试集均包含这些类别。"
+                    _(
+                        "preprocessing.rare_classes_auto_copied",
+                        classes=rare_classes,
+                    )
                 )
             elif rare_class_strategy == "drop":
                 logger.warning(
-                    f"检测到稀有类别 {rare_classes}（样本数 < 2），已过滤。"
+                    _(
+                        "preprocessing.rare_classes_dropped",
+                        classes=rare_classes,
+                    )
                 )
                 valid_classes = class_counts[class_counts >= 2].index.tolist()
                 df = df[df[target_column].isin(valid_classes)].reset_index(drop=True)
                 class_counts = df[target_column].value_counts()
             else:
                 logger.warning(
-                    f"检测到稀有类别 {rare_classes}（样本数 < 2），"
-                    f"rare_class_strategy='{rare_class_strategy}' 未处理，关闭 stratify。"
+                    _(
+                        "preprocessing.rare_classes_unhandled",
+                        classes=rare_classes,
+                        strategy=rare_class_strategy,
+                    )
                 )
                 valid_classes = class_counts[class_counts >= 2].index.tolist()
 
         if len(valid_classes) < 2:
             raise ValueError(
-                f"目标列 '{target_column}' 有效类别数不足 2，无法进行分类训练。"
-                f"原始类别分布：\n{class_counts.to_dict()}"
+                _(
+                    "data.classification_requires_two_classes",
+                    column=target_column,
+                    distribution=class_counts.to_dict(),
+                )
             )
 
         # 只有当测试集能容纳每个类别至少 1 条时才启用分层划分
@@ -232,7 +245,7 @@ def train_val_test_split(
     不得用于拟合任何预处理/模型参数。
     """
     if val_size < 0 or test_size < 0 or val_size + test_size >= 1:
-        raise ValueError("val_size 与 test_size 必须非负且之和小于 1")
+        raise ValueError(_("preprocessing.split_size_invalid"))
 
     # 先划分出 test
     first_split = split_data(

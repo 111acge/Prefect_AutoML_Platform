@@ -6,8 +6,8 @@ See LICENSE for details.
 
 <template>
   <el-form ref="formRef" :model="form" :rules="rules" label-width="120px">
-    <el-form-item label="目标列" prop="target_column">
-      <el-select v-model="form.target_column" style="width: 100%" placeholder="请选择目标列">
+    <el-form-item :label="$t('trainForm.targetColumn')" prop="target_column">
+      <el-select v-model="form.target_column" style="width: 100%" :placeholder="$t('trainForm.targetPlaceholder')">
         <el-option
           v-for="col in columns"
           :key="col"
@@ -17,24 +17,24 @@ See LICENSE for details.
       </el-select>
     </el-form-item>
 
-    <el-form-item label="任务类型" prop="task_type">
+    <el-form-item :label="$t('trainForm.taskType')" prop="task_type">
       <el-select v-model="form.task_type" style="width: 100%">
-        <el-option label="二分类" value="binary_classification" />
-        <el-option label="多分类" value="multiclass_classification" />
-        <el-option label="回归" value="regression" />
+        <el-option :label="$t('trainForm.binary')" value="binary_classification" />
+        <el-option :label="$t('trainForm.multiclass')" value="multiclass_classification" />
+        <el-option :label="$t('trainForm.regression')" value="regression" />
       </el-select>
     </el-form-item>
 
-    <el-form-item label="快速模式">
+    <el-form-item :label="$t('trainForm.quickMode')">
       <el-radio-group v-model="quickMode" @change="onQuickModeChange">
-        <el-radio-button value="quick">快速体验</el-radio-button>
-        <el-radio-button value="standard">标准</el-radio-button>
-        <el-radio-button value="deep">深度</el-radio-button>
-        <el-radio-button value="unlimited">不限制</el-radio-button>
+        <el-radio-button value="quick">{{ $t('trainForm.quickModes.quick') }}</el-radio-button>
+        <el-radio-button value="standard">{{ $t('trainForm.quickModes.standard') }}</el-radio-button>
+        <el-radio-button value="deep">{{ $t('trainForm.quickModes.deep') }}</el-radio-button>
+        <el-radio-button value="unlimited">{{ $t('trainForm.quickModes.unlimited') }}</el-radio-button>
       </el-radio-group>
     </el-form-item>
 
-    <el-form-item label="时间预算(分钟)">
+    <el-form-item :label="$t('trainForm.timeBudget')">
       <div style="display: flex; align-items: center; gap: 12px;">
         <el-input-number
           v-model="form.time_budget_minutes"
@@ -44,55 +44,56 @@ See LICENSE for details.
           :controls="false"
           style="width: 160px"
         />
-        <el-checkbox v-model="unlimitedTime">无限制</el-checkbox>
+        <el-checkbox v-model="unlimitedTime">{{ $t('trainForm.unlimited') }}</el-checkbox>
       </div>
     </el-form-item>
 
-    <el-form-item label="Preset">
+    <el-form-item :label="$t('trainForm.preset')">
       <el-select v-model="form.preset" style="width: 100%">
-        <el-option label="自动选择（推荐）" value="auto" />
-        <el-option label="good_quality" value="good_quality" />
-        <el-option label="medium_quality" value="medium_quality" />
-        <el-option label="best_quality" value="best_quality" />
+        <el-option :label="$t('trainForm.presets.auto')" value="auto" />
+        <el-option :label="$t('trainForm.presets.good')" value="good_quality" />
+        <el-option :label="$t('trainForm.presets.medium')" value="medium_quality" />
+        <el-option :label="$t('trainForm.presets.best')" value="best_quality" />
       </el-select>
     </el-form-item>
 
-    <el-form-item label="随机种子">
+    <el-form-item :label="$t('trainForm.seed')">
       <el-input-number
         v-model="form.seed"
         :min="0"
         :controls="false"
         style="width: 100%"
-        placeholder="留空则不固定"
+        :placeholder="$t('trainForm.seedPlaceholder')"
       />
     </el-form-item>
 
-    <el-form-item label="特征工程">
+    <el-form-item :label="$t('trainForm.featureEngineering')">
       <el-switch
         v-model="form.feature_engineering_enabled"
-        active-text="启用高级特征工程"
-        inactive-text="仅基础清洗"
+        :active-text="$t('trainForm.featureEngineeringOn')"
+        :inactive-text="$t('trainForm.featureEngineeringOff')"
       />
     </el-form-item>
 
-    <el-form-item label="执行模式">
+    <el-form-item :label="$t('trainForm.mode')">
       <el-radio-group v-model="form.mode">
-        <el-radio-button value="auto">一键训练</el-radio-button>
-        <el-radio-button value="step">分步 Pipeline</el-radio-button>
+        <el-radio-button value="auto">{{ $t('trainForm.modes.auto') }}</el-radio-button>
+        <el-radio-button value="step">{{ $t('trainForm.modes.step') }}</el-radio-button>
       </el-radio-group>
     </el-form-item>
   </el-form>
 
   <div class="form-footer">
-    <el-button @click="$emit('cancel')">取消</el-button>
+    <el-button @click="$emit('cancel')">{{ $t('common.cancel') }}</el-button>
     <el-button type="primary" :loading="loading" @click="submit">
-      {{ form.mode === 'step' ? '创建 Pipeline' : '开始训练' }}
+      {{ form.mode === 'step' ? $t('trainForm.createPipeline') : $t('trainForm.startTrain') }}
     </el-button>
   </div>
 </template>
 
 <script setup>
 import { ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 
 const props = defineProps({
@@ -102,6 +103,7 @@ const props = defineProps({
 
 const emit = defineEmits(['submit', 'cancel'])
 
+const { t } = useI18n()
 const formRef = ref(null)
 const columns = ref([])
 const unlimitedTime = ref(false)
@@ -168,8 +170,8 @@ function onQuickModeChange(mode) {
 }
 
 const rules = {
-  target_column: [{ required: true, message: '请选择目标列', trigger: 'change' }],
-  task_type: [{ required: true, message: '请选择任务类型', trigger: 'change' }],
+  target_column: [{ required: true, message: t('trainForm.validation.targetRequired'), trigger: 'change' }],
+  task_type: [{ required: true, message: t('trainForm.validation.taskTypeRequired'), trigger: 'change' }],
 }
 
 async function submit() {

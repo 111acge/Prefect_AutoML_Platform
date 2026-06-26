@@ -25,6 +25,7 @@ from sqlalchemy import select
 
 from config import settings
 from database import AsyncSessionLocal
+from i18n import _, get_locale, set_locale
 from models import Run
 
 
@@ -49,6 +50,7 @@ class TrainingJob:
     rare_class_strategy: str = "auto"
     # None 表示端到端执行；否则为单步名称
     step: str | None = None
+    locale: str = "zh-CN"
     process: asyncio.subprocess.Process | None = None
     status: str = "pending"
     error_message: str | None = None
@@ -154,6 +156,7 @@ class TrainingExecutor:
             candidate_config=kwargs.get("candidate_config"),
             rare_class_strategy=kwargs.get("rare_class_strategy", "auto"),
             step=kwargs.get("step"),
+            locale=kwargs.get("locale", "zh-CN"),
         )
         self._jobs[run_id] = job
 
@@ -180,6 +183,7 @@ class TrainingExecutor:
             candidate_config=kwargs.get("candidate_config"),
             rare_class_strategy=kwargs.get("rare_class_strategy", "auto"),
             step=kwargs.get("step"),
+            locale=kwargs.get("locale", "zh-CN"),
         )
         self._jobs[run_id] = job
 
@@ -272,6 +276,7 @@ class TrainingExecutor:
 
     async def _execute(self, job: TrainingJob) -> None:
         """执行训练子进程。"""
+        set_locale(job.locale)
         await self._update_run(job.run_id, "running")
         job.status = "running"
 
@@ -294,6 +299,7 @@ class TrainingExecutor:
 
         env = os.environ.copy()
         env["PREFECT_API_URL"] = ""
+        env["APP_LOCALE"] = job.locale
         # 强制子进程 stdout/stderr 使用 UTF-8，避免 Windows 重定向时写入 cp936 导致日志解码失败
         env["PYTHONIOENCODING"] = "utf-8"
 
@@ -320,7 +326,7 @@ class TrainingExecutor:
 
         try:
             log_file = log_path.open("w", encoding="utf-8")
-            log_file.write(f"[{datetime.now(UTC).isoformat()}] 启动训练任务: {job.run_id}\n")
+            log_file.write(f"[{datetime.now(UTC).isoformat()}] {_('training.started', run_id=job.run_id)}\n")
             log_file.flush()
 
             job.process = await asyncio.create_subprocess_exec(
@@ -343,15 +349,15 @@ class TrainingExecutor:
             if returncode != 0:
                 error_message = (
                     self._read_error_message(job.output_dir)
-                    or f"Flow 执行失败 (exit {returncode})，详见 training.log"
+                    or _("training.flow_failed", code=returncode)
                 )
                 log_file.write(
-                    f"\n[{datetime.now(UTC).isoformat()}] 训练失败 (exit {returncode}): {error_message}\n"
+                    f"\n[{datetime.now(UTC).isoformat()}] {_('training.failed', code=returncode, msg=error_message)}\n"
                 )
                 log_file.flush()
                 raise RuntimeError(error_message)
 
-            log_file.write(f"\n[{datetime.now(UTC).isoformat()}] 训练完成\n")
+            log_file.write(f"\n[{datetime.now(UTC).isoformat()}] {_('training.completed')}\n")
             log_file.flush()
 
             await self._save_metrics(job.run_id, job.output_dir)
@@ -365,10 +371,7 @@ class TrainingExecutor:
 
             # 全局超时后尝试 Best-so-far 恢复：若 AutoGluon 已保存部分模型，则视为完成
             if self._has_partial_model(job.output_dir):
-                warning = (
-                    "训练在全局超时时完成，已返回 AutoGluon 当前最优模型。"
-                    "部分产物（如报告、扩展指标）可能不完整。"
-                )
+                warning = _("training.timeout_with_model")
                 with log_path.open("a", encoding="utf-8") as f:
                     f.write(f"\n[{datetime.now(UTC).isoformat()}] {warning}\n")
                 await self._save_metrics(job.run_id, job.output_dir)
@@ -377,10 +380,10 @@ class TrainingExecutor:
                 job.error_message = warning
             else:
                 with log_path.open("a", encoding="utf-8") as f:
-                    f.write(f"\n[{datetime.now(UTC).isoformat()}] ERROR: 训练超时，且未找到可用模型\n")
-                await self._update_run(job.run_id, "failed", "训练超时，且未找到可用模型", set_completed=True)
+                    f.write(f"\n[{datetime.now(UTC).isoformat()}] ERROR: {_('training.timeout_no_model')}\n")
+                await self._update_run(job.run_id, "failed", _("training.timeout_no_model"), set_completed=True)
                 job.status = "failed"
-                job.error_message = "训练超时，且未找到可用模型"
+                job.error_message = _("training.timeout_no_model")
 
         except Exception as e:
             if job.process is not None and job.process.returncode is None:

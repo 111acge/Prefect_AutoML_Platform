@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
+from i18n import _
 from models import Dataset, Experiment, Trial
 from schemas import ExperimentCreate, ExperimentResponse, TrialResponse
 from services.data_service import infer_target_column, infer_task_type
@@ -46,13 +47,13 @@ async def create_experiment(
     result = await db.execute(select(Dataset).where(Dataset.id == request.dataset_id))
     dataset = result.scalar_one_or_none()
     if not dataset:
-        raise HTTPException(status_code=404, detail="数据集不存在")
+        raise HTTPException(status_code=404, detail=_("dataset.not_found"))
 
     target_column, task_type = _resolve_target_task(dataset, request)
     if not target_column:
-        raise HTTPException(status_code=400, detail="无法确定目标列")
+        raise HTTPException(status_code=400, detail=_("run.missing_target_column"))
     if not task_type:
-        raise HTTPException(status_code=400, detail="无法确定任务类型")
+        raise HTTPException(status_code=400, detail=_("run.missing_task_type"))
 
     # 创建实验记录
     experiment = Experiment(
@@ -104,7 +105,7 @@ async def get_experiment(experiment_id: str, db: AsyncSession = Depends(get_db))
     result = await db.execute(select(Experiment).where(Experiment.id == experiment_id))
     experiment = result.scalar_one_or_none()
     if not experiment:
-        raise HTTPException(status_code=404, detail="实验不存在")
+        raise HTTPException(status_code=404, detail=_("experiment.not_found"))
     return experiment
 
 
@@ -123,7 +124,7 @@ async def get_best_run(experiment_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Experiment).where(Experiment.id == experiment_id))
     experiment = result.scalar_one_or_none()
     if not experiment:
-        raise HTTPException(status_code=404, detail="实验不存在")
+        raise HTTPException(status_code=404, detail=_("experiment.not_found"))
     if not experiment.best_run_id:
-        raise HTTPException(status_code=400, detail="实验尚未产生最佳 Run")
+        raise HTTPException(status_code=400, detail=_("experiment.no_best_run"))
     return {"experiment_id": experiment_id, "best_run_id": experiment.best_run_id}
