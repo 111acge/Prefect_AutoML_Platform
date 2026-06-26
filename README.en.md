@@ -20,6 +20,7 @@ An end-to-end fully automated machine learning platform powered by **Prefect** w
 - [Testing](#testing)
 - [Environment Variables](#environment-variables)
 - [TODO / Roadmap](#todo--roadmap)
+- [Security Notice](#security-notice)
 - [License](#license)
 
 ---
@@ -331,6 +332,27 @@ See [`.env.example`](./.env.example) for details.
 ## TODO / Roadmap
 
 - [x] Internationalization (i18n) support for Chinese and English
+- [ ] Fix file upload path traversal and add extension/size validation
+- [ ] Upgrade starlette / fastapi and pydantic-settings to fix known CVEs
+- [ ] Sanitize LLM error messages to avoid leaking API Key fragments from third-party responses
+- [ ] Adapt to Python 3.15 after upstream dependencies become compatible
+
+---
+
+## Security Notice
+
+This project is intended as a **local or trusted intranet self-hosted tool**. It does not provide public services, and direct deployment on the public Internet is not recommended.
+
+The current version has the following deployment-related limitations; please assess the risks yourself:
+
+- **No authentication/authorization**: All APIs are open by default; anyone who can reach the backend can call training, prediction, model download, and other endpoints.
+- **Permissive CORS**: In development mode, `allow_origins=["*"]` and `allow_credentials=True` are both enabled for convenient local frontend-backend debugging; tighten this for public deployments.
+- **Absolute paths in API responses**: Dataset and run responses contain server-local absolute paths (`file_path`, `output_dir`).
+- **External database connections**: The database connection feature lets users specify arbitrary hosts and SQLite file paths and execute custom SQL; only connect to data sources you trust.
+- **Raw errors returned to client**: Some endpoints return the original exception message to the frontend to aid local debugging.
+- **Dependency vulnerabilities**: Some dependencies (e.g., starlette, pydantic-settings) have known CVEs; see [TODO / Roadmap](#todo--roadmap).
+
+When using this in public or shared environments, add your own reverse proxy, authentication, CORS restrictions, and rate limiting.
 
 ---
 
