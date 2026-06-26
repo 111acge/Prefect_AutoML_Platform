@@ -181,6 +181,16 @@ def cross_validate_pipeline(
 
     scorer = _sklearn_scorer_name(primary_metric, task_type)
 
+    if task_type == "regression" and not pd.api.types.is_numeric_dtype(y):
+        return {
+            "cv_scores": [],
+            "cv_error": _("dataset.regression_requires_numeric"),
+            "cv_type": type(cv).__name__,
+            "n_folds": getattr(cv, "n_splits", n_folds),
+            "primary_metric": primary_metric,
+            "scorer": scorer,
+        }
+
     preprocessor = DataPreprocessor(
         target_column=target_column,
         strategy=strategy,
