@@ -22,7 +22,6 @@ from typing import Any, Dict, List, Optional
 from config import settings
 from i18n import _
 from services.llm_settings_service import (
-    get_active_api_key as _get_dynamic_api_key,
     get_active_model as _get_dynamic_model,
     get_active_provider as _get_dynamic_provider,
     get_provider_config as _get_provider_config,
@@ -71,13 +70,7 @@ PROVIDER_CONFIG: Dict[str, Dict[str, Any]] = {
 
 
 def _get_api_key(provider: str) -> Optional[str]:
-    """读取对应提供商的 API 密钥（优先动态配置，其次环境变量/pydantic settings）。"""
-    # 如果当前激活的 provider 与请求一致，优先使用用户在前端配置的动态 key
-    if _get_dynamic_provider() == provider:
-        dynamic_key = _get_dynamic_api_key()
-        if dynamic_key:
-            return dynamic_key
-
+    """读取对应提供商的 API 密钥（仅来自环境变量 / .env，服务器不保存 key）。"""
     cfg = PROVIDER_CONFIG.get(provider, {})
     env_key = cfg.get("env_key")
     if env_key:

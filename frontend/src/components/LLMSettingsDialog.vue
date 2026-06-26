@@ -27,6 +27,15 @@ See LICENSE for details.
         {{ $t('llmSettings.description') }}
       </el-alert>
 
+      <el-alert
+        v-if="envKeyHint"
+        type="warning"
+        :closable="false"
+        style="margin-bottom: 16px;"
+      >
+        {{ envKeyHint }}
+      </el-alert>
+
       <el-form-item :label="$t('llmSettings.provider')" prop="provider">
         <el-select v-model="form.provider" :placeholder="$t('llmSettings.providerPlaceholder')" style="width: 100%">
           <el-option
@@ -46,8 +55,11 @@ See LICENSE for details.
           :placeholder="$t('llmSettings.apiKeyPlaceholder')"
           clearable
         />
-        <div v-if="config.api_key_masked" class="key-hint">
-          {{ $t('llmSettings.saved', { masked: config.api_key_masked }) }}
+        <div v-if="config.api_key_configured" class="key-hint success-hint">
+          {{ $t('llmSettings.apiKeyConfigured') }}
+        </div>
+        <div v-else class="key-hint">
+          {{ $t('llmSettings.apiKeyNotConfigured') }}
         </div>
       </el-form-item>
 
@@ -88,15 +100,15 @@ const saving = ref(false)
 const config = ref({
   provider: null,
   model: null,
-  api_key_masked: null,
+  api_key_configured: false,
   supported_providers: [],
 })
 
 const providerOptions = {
-  kimi: { defaultModel: 'moonshot-v1-8k' },
-  deepseek: { defaultModel: 'deepseek-v4-flash' },
-  minimax: { defaultModel: 'MiniMax-M3' },
-  glm: { defaultModel: 'glm-4-flash' },
+  kimi: { defaultModel: 'moonshot-v1-8k', envKey: 'KIMI_API_KEY' },
+  deepseek: { defaultModel: 'deepseek-v4-flash', envKey: 'DEEPSEEK_API_KEY' },
+  minimax: { defaultModel: 'MiniMax-M3', envKey: 'MINIMAX_API_KEY' },
+  glm: { defaultModel: 'glm-4-flash', envKey: 'GLM_API_KEY' },
 }
 
 const form = ref({
@@ -117,6 +129,13 @@ const defaultModel = computed(() => {
   return providerOptions[key]?.defaultModel || '-'
 })
 
+const envKeyHint = computed(() => {
+  const key = form.value.provider
+  const envKey = providerOptions[key]?.envKey
+  if (!envKey) return ''
+  return t('llmSettings.envKeyHint', { envKey })
+})
+
 const modelHint = computed(() => {
   const key = form.value.provider
   if (key === 'deepseek') {
@@ -127,7 +146,7 @@ const modelHint = computed(() => {
 
 const rules = {
   provider: [{ required: true, message: t('llmSettings.validation.providerRequired'), trigger: 'change' }],
-  apiKey: [{ required: true, message: t('llmSettings.validation.apiKeyRequired'), trigger: 'blur' }],
+  apiKey: [{ required: false }],
 }
 
 watch(
@@ -164,7 +183,7 @@ const handleSave = async () => {
   try {
     const payload = {
       provider: form.value.provider,
-      api_key: form.value.apiKey,
+      api_key: form.value.apiKey || undefined,
       model: form.value.model.trim() || undefined,
     }
     const res = await llmSettingsApi.save(payload)
@@ -187,6 +206,10 @@ const handleSave = async () => {
   font-size: 12px;
   color: #909399;
   line-height: 1.4;
+}
+
+.success-hint {
+  color: #67c23a;
 }
 
 .deprecation-hint {

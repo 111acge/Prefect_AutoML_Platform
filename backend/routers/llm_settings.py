@@ -4,7 +4,8 @@
 
 """LLM 配置管理 API。
 
-支持前端动态配置 LLM 提供商、API Key 和模型。
+服务器不持久化保存 API Key。API Key 必须通过环境变量 / .env 注入。
+前端传入的 API Key 仅用于一次性验证，不会被写入数据库或内存缓存。
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from services.llm_settings_service import (
     SUPPORTED_PROVIDERS,
+    get_active_api_key,
     get_llm_config,
     get_provider_config,
     save_llm_config,
@@ -26,19 +28,22 @@ router = APIRouter(tags=["settings"])
 
 
 class LLMConfigRequest(BaseModel):
-    """保存 LLM 配置请求。"""
+    """保存 LLM 配置请求。
+
+    api_key 仅用于一次性验证，服务器不会保留。
+    """
 
     provider: str = Field(..., pattern="^(kimi|deepseek|minimax|glm)$")
-    api_key: str = Field(..., min_length=1)
+    api_key: Optional[str] = Field(default=None)
     model: Optional[str] = Field(default=None)
 
 
 class LLMConfigResponse(BaseModel):
-    """LLM 配置响应（不包含 API Key 完整值）。"""
+    """LLM 配置响应（不包含 API Key 任何信息）。"""
 
     provider: Optional[str] = None
     model: Optional[str] = None
-    api_key_masked: Optional[str] = None
+    api_key_configured: bool = False
     supported_providers: list[str] = []
 
 
@@ -48,30 +53,21 @@ class ProviderInfoResponse(BaseModel):
     providers: Dict[str, Dict[str, Any]]
 
 
-def _mask_api_key(key: Optional[str]) -> Optional[str]:
-    """对 API Key 做掩码展示。"""
-    if not key:
-        return None
-    if len(key) <= 8:
-        return "*" * len(key)
-    return key[:4] + "****" + key[-4:]
-
-
 @router.get("/llm", response_model=LLMConfigResponse)
 async def get_llm_settings():
-    """获取当前 LLM 配置（API Key 已掩码）。"""
+    """获取当前 LLM 配置。API Key 是否配置仅通过环境变量判断。"""
     cfg = get_llm_config()
     return LLMConfigResponse(
         provider=cfg.get("provider"),
         model=cfg.get("model"),
-        api_key_masked=_mask_api_key(cfg.get("api_key")),
+        api_key_configured=get_active_api_key() is not None,
         supported_providers=SUPPORTED_PROVIDERS,
     )
 
 
 @router.post("/llm", response_model=LLMConfigResponse)
 async def save_llm_settings(request: LLMConfigRequest):
-    """保存 LLM 配置。"""
+    """保存 LLM 配置（仅保存 provider / model，不保存 API Key）。"""
     try:
         await save_llm_config(
             provider=request.provider,
@@ -85,7 +81,7 @@ async def save_llm_settings(request: LLMConfigRequest):
     return LLMConfigResponse(
         provider=cfg.get("provider"),
         model=cfg.get("model"),
-        api_key_masked=_mask_api_key(cfg.get("api_key")),
+        api_key_configured=get_active_api_key() is not None,
         supported_providers=SUPPORTED_PROVIDERS,
     )
 

@@ -4,6 +4,7 @@
 
 """应用配置管理。"""
 
+import os
 from pathlib import Path
 from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -73,6 +74,19 @@ DEFAULT_SHAP_SAMPLE_SIZE_NORMAL = 200
 DEFAULT_PERM_IMPORTANCE_REPEATS_HIGH_CARD = 2
 DEFAULT_PERM_IMPORTANCE_REPEATS_NORMAL = 5
 DEFAULT_PERM_IMPORTANCE_SAMPLE_SIZE = 500
+
+def get_recommended_num_cpus(reserved: int = 1) -> int:
+    """根据实际 CPU 核心数动态返回推荐的并行核心数。
+
+    Args:
+        reserved: 保留给系统/其他进程的核心数，默认 1。
+
+    Returns:
+        至少为 1 的可用核心数。
+    """
+    cpus = os.cpu_count() or 1
+    return max(1, cpus - reserved)
+
 
 # 确保数据目录存在
 settings.data_dir.mkdir(parents=True, exist_ok=True)

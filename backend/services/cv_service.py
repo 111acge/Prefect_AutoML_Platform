@@ -46,6 +46,7 @@ from sklearn.pipeline import Pipeline
 
 from services.preprocessing_pipeline import DataPreprocessor
 from i18n import _
+from config import get_recommended_num_cpus
 
 
 def get_cv_splitter(
@@ -93,6 +94,11 @@ def get_cv_splitter(
     return KFold(n_splits=n_folds, shuffle=True, random_state=42)
 
 
+def _get_n_jobs() -> int:
+    """根据实际 CPU 核心数动态确定 sklearn 并行作业数，至少保留 1 个核心给系统。"""
+    return get_recommended_num_cpus(reserved=1)
+
+
 def _sklearn_scorer_name(primary_metric: str, task_type: str) -> str:
     """把内部指标名映射为 sklearn scoring 名称（越大越好）。"""
     mapping = {
@@ -121,11 +127,12 @@ def _sklearn_scorer_name(primary_metric: str, task_type: str) -> str:
 
 def _build_baseline_estimator(task_type: str) -> BaseEstimator:
     """构造一个轻量基线模型用于 CV 评估。"""
+    n_jobs = _get_n_jobs()
     if task_type == "binary_classification":
-        return RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+        return RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=n_jobs)
     if task_type == "multiclass_classification":
-        return RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
-    return RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
+        return RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=n_jobs)
+    return RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=n_jobs)
 
 
 def cross_validate_pipeline(
@@ -200,7 +207,7 @@ def cross_validate_pipeline(
     pipeline = Pipeline([("preprocessor", preprocessor), ("model", model)])
 
     try:
-        scores = cross_val_score(pipeline, X, y, cv=cv, scoring=scorer, n_jobs=-1)
+        scores = cross_val_score(pipeline, X, y, cv=cv, scoring=scorer, n_jobs=_get_n_jobs())
         return {
             "cv_scores": [round(float(s), 6) for s in scores],
             "cv_mean": round(float(np.mean(scores)), 6),

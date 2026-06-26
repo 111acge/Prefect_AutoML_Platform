@@ -16,6 +16,7 @@ from autogluon.tabular import TabularPredictor
 from sklearn.utils.class_weight import compute_sample_weight
 from services.explainability import compute_shap_values, compute_permutation_importance
 from i18n import _
+from config import get_recommended_num_cpus
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,7 @@ class AutoMLService:
             "presets": preset,
             "time_limit": time_limit,
             "dynamic_stacking": False,  # 禁用 DyStack，避免某些场景下 Learner 被重复 fit
-            "num_cpus": os.cpu_count(),  # 使用全部逻辑核心（默认 AutoGluon 只用物理核心）
+            "num_cpus": get_recommended_num_cpus(),  # 基于实际 CPU 核心数动态分配，保留 1 核给系统
         }
         # 动态模型空间
         hyperparameters = self._select_hyperparameters(strategy, seed)
