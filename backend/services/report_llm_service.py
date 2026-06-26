@@ -118,6 +118,7 @@ async def generate_business_interpretation(
     timeout: float = 30.0,
     force_rule_based: bool = False,
     raise_on_failure: bool = False,
+    api_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """生成业务解读报告。
 
@@ -134,7 +135,7 @@ async def generate_business_interpretation(
             task_type, primary_metric, metrics, feature_importance, quality, strategy
         )
 
-    providers = resolve_providers(provider)
+    providers = resolve_providers(provider, api_key=api_key)
     if not providers:
         msg = _("report_llm.no_api_key")
         logger.warning("%s, falling back to rule-based interpretation", msg)
@@ -157,6 +158,7 @@ async def generate_business_interpretation(
                 max_tokens=None,
                 temperature=0.0,
                 timeout=None,
+                api_key=api_key,
             )
             parsed = _parse_llm_json(raw)
             parsed["provider"] = prov
@@ -175,7 +177,9 @@ async def generate_business_interpretation(
     msg = _("report_llm.all_failed", last_error=last_error)
     logger.warning(msg)
     if raise_on_failure:
-        raise RuntimeError(msg) from last_error
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError(msg)
     return _rule_based_interpretation(
         task_type, primary_metric, metrics, feature_importance, quality, strategy
     )

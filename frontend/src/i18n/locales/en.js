@@ -263,8 +263,7 @@ export default {
     predict: {
       jsonTitle: 'Single / Batch JSON Prediction',
       jsonHint: 'Please enter a JSON array of data',
-      jsonExample: 'Example: [{"feature1": 1, "feature2": 2}]',
-      jsonPlaceholder: '[{"feature1": 1, "feature2": 2}]',
+      jsonExamplePrefix: 'Example: ',
       result: 'Prediction Result:',
       predict: 'Predict',
       csvTitle: 'Batch CSV Prediction',

@@ -13,7 +13,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+
+try:
+    from openai import APIError, AuthenticationError
+except Exception:  # pragma: no cover
+    APIError = Exception
+    AuthenticationError = Exception
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -789,9 +796,22 @@ async def run_events(run_id: str, db: AsyncSession = Depends(get_db)):
     )
 
 
+class InterpretationRegenerateRequest(BaseModel):
+    """重新生成业务解读请求。"""
+
+    api_key: Optional[str] = None
+
+
 @router.post("/{run_id}/interpretation/regenerate")
-async def regenerate_interpretation(run_id: str, db: AsyncSession = Depends(get_db)):
-    """重新生成业务解读（用于用户配置 LLM Key 后刷新解读）。"""
+async def regenerate_interpretation(
+    run_id: str,
+    request: InterpretationRegenerateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """重新生成业务解读（用于用户配置 LLM Key 后刷新解读）。
+
+    api_key 仅用于本次调用，服务器不会保存。
+    """
     result = await db.execute(select(Run).where(Run.id == run_id))
     run = result.scalar_one_or_none()
     if not run:
@@ -799,7 +819,8 @@ async def regenerate_interpretation(run_id: str, db: AsyncSession = Depends(get_
     if run.status != "completed":
         raise HTTPException(status_code=400, detail=_("run.not_completed"))
 
-    if not get_active_api_key():
+    effective_key = (request.api_key or get_active_api_key() or "").strip()
+    if not effective_key:
         raise HTTPException(status_code=400, detail=_("run.no_llm_key"))
 
     output_dir = Path(run.output_dir)
@@ -825,9 +846,22 @@ async def regenerate_interpretation(run_id: str, db: AsyncSession = Depends(get_
             quality=quality,
             strategy=strategy,
             raise_on_failure=True,
+            api_key=effective_key,
         )
         manifest.save_json(manifest.interpretation_path, interpretation)
         return interpretation
+    except AuthenticationError as e:
+        logger.warning("LLM AuthenticationError: %s", e)
+        raise HTTPException(
+            status_code=400,
+            detail=_("run.llm_authentication_failed", msg=str(e)),
+        ) from e
+    except APIError as e:
+        logger.warning("LLM APIError: %s", e)
+        raise HTTPException(
+            status_code=400,
+            detail=_("run.llm_api_error", msg=str(e)),
+        ) from e
     except Exception as e:
         logger.exception("重新生成业务解读失败")
         raise HTTPException(status_code=500, detail=_("run.regenerate_failed", msg=e)) from e

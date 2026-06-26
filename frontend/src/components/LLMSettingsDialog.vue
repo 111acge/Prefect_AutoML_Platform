@@ -181,9 +181,12 @@ const handleSave = async () => {
 
   saving.value = true
   try {
+    // 临时 API Key 仅保存在浏览器 sessionStorage 中，页面关闭即失，不会发送到服务器保存
+    if (form.value.apiKey) {
+      sessionStorage.setItem('llm_api_key', form.value.apiKey.trim())
+    }
     const payload = {
       provider: form.value.provider,
-      api_key: form.value.apiKey || undefined,
       model: form.value.model.trim() || undefined,
     }
     const res = await llmSettingsApi.save(payload)

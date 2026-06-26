@@ -311,7 +311,7 @@ See LICENSE for details.
                   <el-alert
                     :title="$t('runDetail.predict.jsonHint')"
                     type="info"
-                    :description="$t('runDetail.predict.jsonExample')"
+                    :description="$t('runDetail.predict.jsonExamplePrefix') + JSON_EXAMPLE"
                     show-icon
                     :closable="false"
                   />
@@ -319,7 +319,7 @@ See LICENSE for details.
                     v-model="predictInput"
                     type="textarea"
                     :rows="6"
-                    :placeholder="$t('runDetail.predict.jsonPlaceholder')"
+                    :placeholder="JSON_EXAMPLE"
                     style="margin-top: 15px;"
                   />
                   <div v-if="predictResult" class="predict-result">
@@ -425,6 +425,8 @@ import LLMSettingsDialog from '@/components/LLMSettingsDialog.vue'
 const route = useRoute()
 const runId = route.params.id
 const { t } = useI18n()
+
+const JSON_EXAMPLE = '[{"feature1": 1, "feature2": 2}]'
 
 const run = ref({})
 const results = ref(null)
@@ -686,7 +688,8 @@ const fetchResults = async () => {
 const checkLLMConfig = async () => {
   try {
     const res = await llmSettingsApi.get()
-    llmConfigured.value = !!(res.data?.provider && res.data?.api_key_masked)
+    const ephemeralKey = sessionStorage.getItem('llm_api_key')
+    llmConfigured.value = !!(res.data?.provider && (res.data?.api_key_configured || ephemeralKey))
   } catch (error) {
     llmConfigured.value = false
     console.error(t('runDetail.errors.checkLLMFailed', { msg: error.message || t('common.unknown') }), error)
@@ -696,7 +699,8 @@ const checkLLMConfig = async () => {
 const regenerateInterpretation = async () => {
   regeneratingInterpretation.value = true
   try {
-    const res = await runApi.regenerateInterpretation(runId)
+    const ephemeralKey = (sessionStorage.getItem('llm_api_key') || '').trim()
+    const res = await runApi.regenerateInterpretation(runId, ephemeralKey)
     results.value = { ...results.value, business_interpretation: res.data }
     ElMessage.success(t('runDetail.interpretationRegenerated'))
   } catch (error) {

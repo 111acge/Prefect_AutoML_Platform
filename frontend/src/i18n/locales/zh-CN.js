@@ -263,8 +263,7 @@ export default {
     predict: {
       jsonTitle: '单条 / 批量 JSON 预测',
       jsonHint: '请输入 JSON 格式的数据数组',
-      jsonExample: '例如：[{"feature1": 1, "feature2": 2}]',
-      jsonPlaceholder: '[{"feature1": 1, "feature2": 2}]',
+      jsonExamplePrefix: '例如：',
       result: '预测结果：',
       predict: '预测',
       csvTitle: '批量 CSV 预测',

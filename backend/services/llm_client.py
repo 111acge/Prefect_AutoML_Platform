@@ -82,8 +82,27 @@ def _get_api_key(provider: str) -> Optional[str]:
     return None
 
 
-def resolve_providers(provider: str = "auto") -> List[str]:
-    """根据 provider 参数与可用环境变量确定实际尝试的提供商列表。"""
+def resolve_providers(provider: str = "auto", api_key: Optional[str] = None) -> List[str]:
+    """根据 provider 参数与可用 key 确定实际尝试的提供商列表。
+
+    Args:
+        provider: 指定提供商或 auto。
+        api_key: 临时传入的 API Key；传入时优先使用，不再检查环境变量。
+    """
+    if api_key:
+        if provider and provider.lower() != "auto":
+            prov = provider.lower()
+            if prov in PROVIDER_CONFIG:
+                return [prov]
+            logger.warning(_("llm.unknown_provider_log", provider=prov))
+            return []
+        # provider=auto 时，使用当前已配置的提供商（由用户在前端设置）
+        active = _get_dynamic_provider()
+        if active and active in PROVIDER_CONFIG:
+            return [active]
+        logger.warning(_("llm.no_active_provider_for_ephemeral_key"))
+        return []
+
     if provider and provider.lower() != "auto":
         prov = provider.lower()
         if prov not in PROVIDER_CONFIG:
@@ -121,17 +140,26 @@ async def call_provider(
     max_tokens: Optional[int] = 4096,
     temperature: float = 0.0,
     timeout: Optional[float] = 60.0,
+    api_key: Optional[str] = None,
 ) -> str:
-    """调用指定 OpenAI 兼容端点并返回原始文本。"""
+    """调用指定 OpenAI 兼容端点并返回原始文本。
+
+    Args:
+        api_key: 临时传入的 API Key；为空时从环境变量读取。
+    """
     if not _OPENAI_AVAILABLE:
         raise RuntimeError(_("llm.openai_not_installed"))
 
     cfg = PROVIDER_CONFIG[provider]
-    api_key = _get_api_key(provider)
-    if not api_key:
+    effective_api_key = (api_key or _get_api_key(provider) or "").strip()
+    if not effective_api_key:
         raise RuntimeError(_("llm.provider_not_configured", provider=provider))
+    try:
+        effective_api_key.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise RuntimeError(_("llm.api_key_non_ascii")) from exc
 
-    client_kwargs: Dict[str, Any] = {"api_key": api_key}
+    client_kwargs: Dict[str, Any] = {"api_key": effective_api_key}
     if cfg.get("base_url"):
         client_kwargs["base_url"] = cfg["base_url"]
 

@@ -59,7 +59,8 @@ export const runApi = {
   predict: (id, data) => api.post(`/runs/${id}/predict`, data),
   delete: (id) => api.delete(`/runs/${id}`),
   compare: (data) => api.post('/runs/compare', data),
-  regenerateInterpretation: (id) => api.post(`/runs/${id}/interpretation/regenerate`, null, { timeout: 0 }),
+  regenerateInterpretation: (id, apiKey) =>
+    api.post(`/runs/${id}/interpretation/regenerate`, { api_key: apiKey || undefined }, { timeout: 0 }),
 }
 
 // LLM 配置 API
