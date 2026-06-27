@@ -4,20 +4,22 @@
 
 """Prefect AutoML Flow 定义。"""
 
-import os
-
-os.environ.setdefault("PREFECT_API_URL", "")
-
+import asyncio
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 
 import pandas as pd
 from prefect import flow, task
 from prefect.artifacts import create_table_artifact, create_markdown_artifact
-from i18n import _, get_locale
 from prefect.cache_policies import INPUTS, TASK_SOURCE
+
+from config import configure_prefect_api_url
+from i18n import _, get_locale, set_locale
+
+configure_prefect_api_url()
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -797,15 +799,14 @@ def cross_validate_task(
     return cv_results
 
 
-@task
-async def generate_business_interpretation_task(
+async def _generate_business_interpretation_async(
     output_dir: str,
     task_type: str,
     primary_metric: Optional[str],
     quality: Optional[Dict[str, Any]] = None,
     strategy: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """生成 LLM 业务解读并保存到 JSON。"""
+    """生成 LLM 业务解读并保存到 JSON（异步实现）。"""
     output_path = Path(output_dir)
 
     # 读取测试集指标
@@ -843,6 +844,26 @@ async def generate_business_interpretation_task(
     return interpretation
 
 
+@task
+def generate_business_interpretation_task(
+    output_dir: str,
+    task_type: str,
+    primary_metric: Optional[str],
+    quality: Optional[Dict[str, Any]] = None,
+    strategy: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """生成 LLM 业务解读并保存到 JSON（同步 Task 包装，供 Flow 调用）。"""
+    return asyncio.run(
+        _generate_business_interpretation_async(
+            output_dir=output_dir,
+            task_type=task_type,
+            primary_metric=primary_metric,
+            quality=quality,
+            strategy=strategy,
+        )
+    )
+
+
 @flow(name="automl-end-to-end", log_prints=True)
 def automl_pipeline(
     file_path: str,
@@ -872,6 +893,56 @@ def automl_pipeline(
         primary_metric: 主要评估指标
         candidate_config: Agent 推荐的候选配置（可选）
     """
+    set_locale(os.environ.get("APP_LOCALE", "zh-CN"))
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # 同时追加写入本地 training.log，保持与本地子进程模式一致的产物接口
+    log_path = output_path / "training.log"
+    file_handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    )
+    root_logger = logging.getLogger()
+    root_logger.addHandler(file_handler)
+
+    try:
+        return _run_automl_pipeline(
+            file_path=file_path,
+            target_column=target_column,
+            task_type=task_type,
+            output_path=output_path,
+            time_budget_minutes=time_budget_minutes,
+            preset=preset,
+            primary_metric=primary_metric,
+            seed=seed,
+            max_models=max_models,
+            cleaning_rules=cleaning_rules,
+            feature_engineering_enabled=feature_engineering_enabled,
+            candidate_config=candidate_config,
+            rare_class_strategy=rare_class_strategy,
+        )
+    finally:
+        root_logger.removeHandler(file_handler)
+        file_handler.close()
+
+
+def _run_automl_pipeline(
+    file_path: str,
+    target_column: Optional[str],
+    task_type: Optional[str],
+    output_path: Path,
+    time_budget_minutes: Optional[float],
+    preset: Optional[str],
+    primary_metric: Optional[str],
+    seed: Optional[int],
+    max_models: int,
+    cleaning_rules: Optional[Dict[str, Any]],
+    feature_engineering_enabled: bool,
+    candidate_config: Optional[Dict[str, Any]],
+    rare_class_strategy: str,
+) -> Dict[str, Any]:
+    output_dir = str(output_path)
     logger.info(_("flow.pipeline_started", file_path=file_path))
 
     # 1. 加载数据

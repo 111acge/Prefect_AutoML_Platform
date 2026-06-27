@@ -19,6 +19,9 @@ prefect>=3.0.0,<4.0.0
 # AutoML (full version, includes torch/fastai/NN)
 autogluon>=1.1.0
 
+# PyTorch (CUDA version from PyPI; install CPU-only via requirements-core.txt if needed)
+torch>=2.0.0
+
 # Data Science Core
 pandas>=2.0.0,<2.4.0
 numpy>=1.25.0,<2.3.0
@@ -35,6 +38,11 @@ imbalanced-learn>=0.11.0
 
 # Explainability
 shap>=0.44.0
+
+# Optional extra deep learning models for tabular AutoML
+# (enabled automatically at runtime when packages are installed)
+fastai>=2.7.0
+tabpfn>=0.1.0
 
 # LLM API (OpenAI-compatible providers: KIMI / DeepSeek / MiniMax)
 openai>=1.0.0

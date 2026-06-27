@@ -13,6 +13,10 @@ cd "$PROJECT_ROOT"
 # 激活虚拟环境
 source .venv/bin/activate
 
+# 启动 Prefect 服务（Server + Runner）
+echo "🚀 启动 Prefect 编排服务..."
+"$PROJECT_ROOT/scripts/start_prefect.sh"
+
 # 启动后端
 cd backend
 echo "🚀 启动后端服务..."

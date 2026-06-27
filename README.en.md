@@ -42,7 +42,7 @@ It also provides a complete REST API for easy integration into existing data pip
 ## Key Features
 
 - 🧠 **Natural Language Intent Parsing (Backend API)**: Provides the `/api/intent` endpoint for parsing natural language descriptions into training configs, extracting business rules, and inferring schemas, which can be integrated into external workflows.
-- 🔄 **Prefect Workflow Orchestration**: Training, evaluation, report generation, and other steps are organized as Prefect Flows, supporting observability and reruns.
+- 🔄 **Prefect Workflow Orchestration**: Training jobs are scheduled and executed by a Prefect Server, with Flow Runs, Task Runs, logs, and artifacts viewable in the Prefect UI; automatically falls back to local subprocess execution when Prefect is unavailable.
 - 🤖 **AutoGluon AutoML**: Automatically tries models and ensemble strategies such as LightGBM, CatBoost, and XGBoost.
 - 🛠️ **Data Quality & Feature Engineering**: Built-in missing value handling, categorical encoding, imbalanced sample processing, feature selection, and more.
 - 📊 **Interpretability Reports**: SHAP values, permutation importance, feature correlation, and distribution visualization.
@@ -168,6 +168,11 @@ After startup, visit:
 - Frontend: `http://localhost:8084`
 - Backend API: `http://localhost:8001`
 - API Docs: `http://localhost:8001/docs`
+- Prefect UI: `http://localhost:4200`
+
+> `scripts/run_dev.sh` and `scripts/run_prod.sh` automatically start the Prefect Server (port 4200) and a local Runner. To disable Prefect orchestration, set `PREFECT_ENABLED=false` in `.env`; training will fall back to the original local subprocess mode.
+>
+> To access the Prefect UI from another machine on the LAN, change `PREFECT_API_URL` in `.env` to this machine's LAN IP (e.g. `http://192.168.1.5:4200/api`) and restart the services.
 
 ---
 

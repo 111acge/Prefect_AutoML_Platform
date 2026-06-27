@@ -37,16 +37,9 @@ dependencies = [
     "tqdm>=4.65.0",
     "packaging>=24.0",
     "openai>=1.0.0",
+    # torch 默认从 PyPI 安装 CUDA 版本；如需 CPU-only，请使用 requirements-core.txt
     "torch>=2.0.0",
 ]
-
-[tool.uv.sources]
-torch = { index = "pytorch-cpu" }
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
 
 [project.optional-dependencies]
 dev = [
@@ -56,6 +49,11 @@ dev = [
     "black>=24.0.0",
     "ruff>=0.4.0",
     "mypy>=1.9.0",
+]
+full = [
+    # 额外深度学习模型（运行时自动检测）
+    "fastai>=2.7.0",
+    "tabpfn>=0.1.0",
 ]
 
 [tool.setuptools]

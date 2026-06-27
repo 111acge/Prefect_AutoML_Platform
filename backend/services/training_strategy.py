@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from config import (
     HIGH_CARDINALITY_CLASS_THRESHOLD,
+    settings,
 )
 from i18n import _
 
@@ -82,6 +83,10 @@ def build_strategy(
     else:
         data_size_label = "large"
     rationale.append(_("strategy.data_scale", label=data_size_label, samples=n_samples, features=n_features))
+
+    # 1.5 GPU 状态说明
+    if settings.use_gpu:
+        rationale.append(_("strategy.gpu_enabled", num_gpus=settings.num_gpus))
 
     # 2. 选择 preset
     preset = user_preset
@@ -307,15 +312,18 @@ def _select_hyperparameters(
         xgb_params = {"n_estimators": 500, "max_depth": 8}
 
     if is_large and not has_high_cardinality:
-        # 大数据但无高基数列：保留轻量 CatBoost
-        return {"GBM": gbm_params, "XGB": xgb_params, "LR": {}, "CAT": {"iterations": 500, "depth": 6}}
+        # 大数据但无高基数列：保留轻量 CatBoost；GPU 可用时加入 NN_TORCH
+        hp: Dict[str, Any] = {"GBM": gbm_params, "XGB": xgb_params, "LR": {}, "CAT": {"iterations": 500, "depth": 6}}
+        if settings.use_gpu:
+            hp["NN_TORCH"] = {}
+        return hp
 
     if is_large or has_high_cardinality:
         # 大数据/高基数场景排除 CatBoost
         return {"GBM": gbm_params, "XGB": xgb_params, "LR": {}}
 
     # 仅高类别数但数据不大的场景：保留完整模型空间但限制 GBM/XGB
-    return {
+    hp = {
         "GBM": gbm_params,
         "XGB": xgb_params,
         "CAT": {"iterations": 500, "depth": 6},
@@ -323,8 +331,11 @@ def _select_hyperparameters(
         "XT": {},
         "KNN": {},
         "LR": {},
-        "NN_TORCH": {},
     }
+    if settings.use_gpu:
+        # NN_TORCH 在 GPU 上才能发挥实用性能
+        hp["NN_TORCH"] = {}
+    return hp
 
 
 def _auto_primary_metric(task_type: str, target_info: Dict[str, Any]) -> str:

@@ -10,15 +10,40 @@ import random
 from pathlib import Path
 from typing import Dict, Any, Optional
 
+import importlib.util
+
 import numpy as np
 import pandas as pd
 from autogluon.tabular import TabularPredictor
 from sklearn.utils.class_weight import compute_sample_weight
 from services.explainability import compute_shap_values, compute_permutation_importance
 from i18n import _
-from config import get_recommended_num_cpus
+from config import settings, get_recommended_num_cpus
 
 logger = logging.getLogger(__name__)
+
+
+def _is_optional_model_available(model_name: str) -> bool:
+    """检查可选模型依赖是否已安装。
+
+    AutoGluon tabular 默认包含 GBM/CAT/XGB/RF/XT/NN_TORCH；
+    FASTAI、TABPFN、AG_AUTOMM 等需要额外安装依赖。
+    """
+    mapping = {
+        "FASTAI": "fastai",
+        "TABPFN": "tabpfn",
+        "TABPFNMIX": "tabpfn",
+        "REALTABPFN": "tabpfn",
+        "REALTABPFN-V2": "tabpfn",
+        "AG_AUTOMM": "autogluon.multimodal",
+    }
+    package = mapping.get(model_name)
+    if not package:
+        return True
+    try:
+        return importlib.util.find_spec(package) is not None
+    except Exception:
+        return False
 
 
 class AutoMLService:
@@ -94,7 +119,10 @@ class AutoMLService:
             "time_limit": time_limit,
             "dynamic_stacking": False,  # 禁用 DyStack，避免某些场景下 Learner 被重复 fit
             "num_cpus": get_recommended_num_cpus(),  # 基于实际 CPU 核心数动态分配，保留 1 核给系统
+            "num_gpus": settings.num_gpus if settings.use_gpu else 0,
         }
+        if settings.use_gpu:
+            logger.info(_("training.gpu_enabled", num_gpus=settings.num_gpus))
         # 动态模型空间
         hyperparameters = self._select_hyperparameters(strategy, seed)
         if hyperparameters:
@@ -380,54 +408,117 @@ class AutoMLService:
             "NN_TORCH": {"seed_value": seed},
         }
 
+    def _apply_gpu_hyperparameters(
+        self, hp: Optional[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        """当 GPU 启用时，为支持的模型注入 GPU 专用超参。
+
+        现有参数优先级高于 GPU 默认参数，避免覆盖用户/策略显式指定的值。
+        NN_TORCH 的 GPU 由 TabularPredictor.fit 的 num_gpus 控制，不在此处注入。
+        """
+        if hp is None or not settings.use_gpu:
+            return hp
+
+        gpu_params = {
+            "GBM": {"device": "gpu", "gpu_platform_id": 0, "gpu_device_id": 0},
+            "XGB": self._get_xgb_gpu_params(),
+            "CAT": {"task_type": "GPU", "devices": "0", "verbose": False},
+        }
+
+        def _merge_params(existing: Any, extra: Dict[str, Any]) -> Any:
+            """合并 GPU 参数到现有参数，保留现有值优先。"""
+            if existing is None:
+                return extra
+            if isinstance(existing, dict):
+                merged = dict(extra)
+                merged.update(existing)
+                return merged
+            if isinstance(existing, list):
+                return [_merge_params(item, extra) for item in existing]
+            return existing
+
+        for model_key, extra in gpu_params.items():
+            if model_key in hp:
+                hp[model_key] = _merge_params(hp[model_key], extra)
+
+        return hp
+
+    @staticmethod
+    def _get_xgb_gpu_params() -> Dict[str, Any]:
+        """根据 XGBoost 版本返回正确的 GPU 参数。
+
+        - XGBoost >= 2.0: 使用 device='cuda'
+        - XGBoost < 2.0: 使用 tree_method='gpu_hist'
+        """
+        try:
+            from importlib.metadata import version
+
+            xgb_version = version("xgboost")
+            major = int(xgb_version.split(".")[0])
+            if major >= 2:
+                return {"device": "cuda"}
+        except Exception:
+            pass
+        return {"tree_method": "gpu_hist"}
+
     def _select_hyperparameters(
         self, strategy: Optional[Dict[str, Any]], seed: Optional[int]
     ) -> Optional[Dict[str, Any]]:
-        """根据策略动态选择模型搜索空间。"""
+        """根据策略动态选择模型搜索空间，注入可选深度学习模型与 GPU 超参。"""
+        hp: Optional[Dict[str, Any]] = None
+
         if strategy is None:
-            return self._hyperparameters_with_seed(seed) if seed is not None else None
-
-        if strategy.get("hyperparameters"):
-            return strategy["hyperparameters"]
-
-        data_size_label = strategy.get("data_size_label", "medium")
-        if data_size_label == "small":
-            # 小数据也展示完整、多样的模型空间：多组超参 + 全量典型模型
-            hp: Dict[str, Any] = {
-                "GBM": [
-                    {"extra_trees": False},
-                    {"extra_trees": True},
-                    {"learning_rate": 0.05, "num_leaves": 31},
-                ],
-                "CAT": [
-                    {},
-                    {"iterations": 1000, "depth": 8},
-                ],
-                "XGB": [
-                    {},
-                    {"max_depth": 6, "eta": 0.1},
-                ],
-                "RF": [
-                    {"n_estimators": 300},
-                    {"n_estimators": 500, "max_features": "sqrt"},
-                ],
-                "XT": [
-                    {"n_estimators": 300},
-                    {"n_estimators": 500},
-                ],
-                "KNN": [{}, {"weights": "distance"}],
-                "LR": [{}, {"C": 0.1}, {"C": 10}],
-                "NN_TORCH": {"seed_value": seed} if seed is not None else {},
-            }
-            return hp
-        elif data_size_label == "large":
-            # 大数据聚焦高效线性/树模型
-            return {"GBM": {}, "CAT": {}, "XGB": {}, "LR": {}}
+            hp = self._hyperparameters_with_seed(seed) if seed is not None else None
+        elif strategy.get("hyperparameters"):
+            hp = strategy["hyperparameters"]
         else:
-            # 中等规模默认模型空间
-            if seed is not None:
-                return self._hyperparameters_with_seed(seed)
-            return {"GBM": {}, "CAT": {}, "XGB": {}, "RF": {}, "XT": {}}
+            data_size_label = strategy.get("data_size_label", "medium")
+            if data_size_label == "small":
+                # 小数据也展示完整、多样的模型空间：多组超参 + 全量典型模型
+                hp = {
+                    "GBM": [
+                        {"extra_trees": False},
+                        {"extra_trees": True},
+                        {"learning_rate": 0.05, "num_leaves": 31},
+                    ],
+                    "CAT": [
+                        {},
+                        {"iterations": 1000, "depth": 8},
+                    ],
+                    "XGB": [
+                        {},
+                        {"max_depth": 6, "eta": 0.1},
+                    ],
+                    "RF": [
+                        {"n_estimators": 300},
+                        {"n_estimators": 500, "max_features": "sqrt"},
+                    ],
+                    "XT": [
+                        {"n_estimators": 300},
+                        {"n_estimators": 500},
+                    ],
+                    "KNN": [{}, {"weights": "distance"}],
+                    "LR": [{}, {"C": 0.1}, {"C": 10}],
+                    "NN_TORCH": {"seed_value": seed} if seed is not None else {},
+                }
+                # 若安装了额外依赖，加入 FASTAI / TabPFN 等深度学习模型
+                if _is_optional_model_available("FASTAI"):
+                    hp["FASTAI"] = {"seed_value": seed} if seed is not None else {}
+                if _is_optional_model_available("REALTABPFN-V2"):
+                    hp["REALTABPFN-V2"] = {}
+            elif data_size_label == "large":
+                # 大数据聚焦高效线性/树模型
+                hp = {"GBM": {}, "CAT": {}, "XGB": {}, "LR": {}}
+            else:
+                # 中等规模默认模型空间
+                if seed is not None:
+                    hp = self._hyperparameters_with_seed(seed)
+                else:
+                    hp = {"GBM": {}, "CAT": {}, "XGB": {}, "RF": {}, "XT": {}}
+                if _is_optional_model_available("FASTAI"):
+                    hp["FASTAI"] = {"seed_value": seed} if seed is not None else {}
+
+        return self._apply_gpu_hyperparameters(hp)
 
     def _map_task_type(self, task_type: str) -> Optional[str]:
         """映射任务类型到 AutoGluon problem_type。"""

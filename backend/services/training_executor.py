@@ -10,6 +10,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import queue
 import sys
@@ -19,7 +20,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from sqlalchemy import select
 
@@ -27,6 +28,17 @@ from config import settings
 from database import AsyncSessionLocal
 from i18n import _, get_locale, set_locale
 from models import Run
+
+# Prefect 相关导入；config 模块已在加载时将 PREFECT_API_URL 写入环境变量
+try:
+    from prefect.client.orchestration import get_client
+    from prefect.exceptions import ObjectNotFound
+
+    _PREFECT_CLIENT_AVAILABLE = True
+except Exception:  # pragma: no cover
+    get_client = None  # type: ignore[assignment]
+    ObjectNotFound = Exception  # type: ignore[misc]
+    _PREFECT_CLIENT_AVAILABLE = False
 
 
 @dataclass
@@ -52,6 +64,7 @@ class TrainingJob:
     step: str | None = None
     locale: str = "zh-CN"
     process: asyncio.subprocess.Process | None = None
+    prefect_flow_run_id: Optional[str] = None
     status: str = "pending"
     error_message: str | None = None
     callbacks: list[Callable[[str, str | None], Awaitable[None]]] = field(default_factory=list)
@@ -274,16 +287,168 @@ class TrainingExecutor:
                     )
             await db.commit()
 
+    # ------------------------------------------------------------------
+    # Prefect 编排支持
+    # ------------------------------------------------------------------
+    def _use_prefect(self, job: TrainingJob) -> bool:
+        """判断是否使用 Prefect 编排执行。"""
+        if not settings.prefect_enabled:
+            return False
+        if not _PREFECT_CLIENT_AVAILABLE:
+            return False
+        # step 模式暂不支持 Prefect 编排，保持本地子进程执行
+        if job.step is not None and job.step != "all":
+            return False
+        return True
+
+    async def _prefect_available(self) -> bool:
+        """检查 Prefect Server 是否可达。"""
+        if not _PREFECT_CLIENT_AVAILABLE:
+            return False
+        try:
+            async with get_client() as client:
+                await client.hello()
+            return True
+        except Exception:
+            return False
+
+    def _build_flow_parameters(self, job: TrainingJob) -> Dict[str, Any]:
+        """构造 Prefect Flow 运行参数。"""
+        params: Dict[str, Any] = {
+            "file_path": str(Path(job.file_path).resolve()),
+            "target_column": job.target_column,
+            "task_type": job.task_type,
+            "output_dir": str(job.output_dir.resolve()),
+            "time_budget_minutes": job.time_budget_minutes,
+            "preset": job.preset,
+            "primary_metric": job.primary_metric,
+            "seed": job.seed,
+            "max_models": job.max_models,
+            "cleaning_rules": job.cleaning_rules,
+            "feature_engineering_enabled": job.feature_engineering_enabled,
+            "candidate_config": job.candidate_config,
+            "rare_class_strategy": job.rare_class_strategy,
+        }
+        return params
+
+    async def _execute_prefect(self, job: TrainingJob) -> None:
+        """通过 Prefect Server 创建并跟踪 Flow Run。"""
+        if not _PREFECT_CLIENT_AVAILABLE or get_client is None:
+            raise RuntimeError(_("training.prefect_client_unavailable"))
+
+        job.output_dir.mkdir(parents=True, exist_ok=True)
+        log_path = job.output_dir / "training.log"
+        log_path.write_text(
+            f"[{datetime.now(UTC).isoformat()}] {_('training.prefect_started', run_id=job.run_id)}\n",
+            encoding="utf-8",
+        )
+
+        deployment_name = f"{settings.prefect_flow_name}/{settings.prefect_deployment_name}"
+
+        async with get_client() as client:
+            # 1. 查找 Deployment
+            try:
+                deployment = await client.read_deployment_by_name(deployment_name)
+            except ObjectNotFound as e:
+                raise RuntimeError(
+                    _("training.prefect_deployment_not_found", name=deployment_name)
+                ) from e
+
+            # 2. 创建 Flow Run
+            parameters = self._build_flow_parameters(job)
+            flow_run = await client.create_flow_run_from_deployment(
+                deployment_id=deployment.id,
+                parameters=parameters,
+                name=f"automl-{job.run_id}",
+            )
+            job.prefect_flow_run_id = str(flow_run.id)
+
+            # 3. 轮询 Flow Run 状态
+            poll_interval = 2.0
+            if job.time_budget_minutes is None:
+                timeout = self.DEFAULT_HARD_TIMEOUT_MINUTES * 60
+            else:
+                timeout = job.time_budget_minutes * 60 + 60
+
+            start_time = asyncio.get_event_loop().time()
+            timed_out = False
+
+            while True:
+                flow_run = await client.read_flow_run(flow_run.id)
+                state = flow_run.state
+
+                # 状态同步到数据库/SSE
+                if state.is_running() and job.status != "running":
+                    job.status = "running"
+                    await self._update_run(job.run_id, "running")
+                elif state.is_final():
+                    break
+
+                # 超时保护
+                elapsed = asyncio.get_event_loop().time() - start_time
+                if elapsed > timeout:
+                    timed_out = True
+                    break
+
+                # 每 10 秒尝试保存一次已生成的指标
+                if int(elapsed) % 10 < int(poll_interval):
+                    await self._save_metrics(job.run_id, job.output_dir)
+
+                await asyncio.sleep(poll_interval)
+
+            # 4. 处理最终结果或超时
+            await self._save_metrics(job.run_id, job.output_dir)
+
+            if timed_out:
+                # Prefect 侧没有直接 cancel API，记录超时并尝试 Best-so-far 恢复
+                if self._has_partial_model(job.output_dir):
+                    warning = _("training.timeout_with_model")
+                    await self._update_run(job.run_id, "completed", warning, set_completed=True)
+                    job.status = "completed"
+                    job.error_message = warning
+                else:
+                    error_message = _("training.timeout_no_model")
+                    await self._update_run(job.run_id, "failed", error_message, set_completed=True)
+                    job.status = "failed"
+                    job.error_message = error_message
+                    raise RuntimeError(error_message)
+
+            final_state = flow_run.state
+            if final_state.is_completed():
+                await self._update_run(job.run_id, "completed", set_completed=True)
+                job.status = "completed"
+            else:
+                error_message = (
+                    final_state.message
+                    or self._read_error_message(job.output_dir)
+                    or _("training.prefect_failed", state=final_state.type.value)
+                )
+                await self._update_run(job.run_id, "failed", error_message, set_completed=True)
+                job.status = "failed"
+                job.error_message = error_message
+                raise RuntimeError(error_message)
+
     async def _execute(self, job: TrainingJob) -> None:
-        """执行训练子进程。"""
+        """执行训练任务：优先走 Prefect 编排，不可用时降级为本地子进程。"""
         set_locale(job.locale)
         await self._update_run(job.run_id, "running")
         job.status = "running"
 
+        # 优先尝试 Prefect 编排；失败时记录并降级到本地子进程
+        if self._use_prefect(job) and await self._prefect_available():
+            try:
+                await self._execute_prefect(job)
+                return
+            except Exception as e:
+                logger = logging.getLogger(__name__)
+                logger.warning(_("training.prefect_fallback", msg=str(e)))
+                await self._update_run(job.run_id, "running")
+                job.status = "running"
+
         job.output_dir.mkdir(parents=True, exist_ok=True)
         log_path = job.output_dir / "training.log"
 
-        # 完全原子化执行：使用 run_step.py
+        # 本地子进程执行：使用 run_step.py
         script_path = settings.project_root / "scripts" / "run_step.py"
         step_arg = job.step if job.step is not None else "all"
         cmd = [
@@ -298,6 +463,7 @@ class TrainingExecutor:
         ]
 
         env = os.environ.copy()
+        # 子进程回退模式下断开 Prefect Server，避免 StepRunner 引入 prefect 时尝试连接
         env["PREFECT_API_URL"] = ""
         env["APP_LOCALE"] = job.locale
         # 强制子进程 stdout/stderr 使用 UTF-8，避免 Windows 重定向时写入 cp936 导致日志解码失败

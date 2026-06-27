@@ -16,8 +16,15 @@ from pathlib import Path
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(project_root, "backend"))
 
-# 必须在导入 prefect 前设置
-os.environ.setdefault("PREFECT_API_URL", "")
+from config import configure_prefect_api_url, settings  # noqa: E402
+
+# 子进程回退模式：默认断开 Prefect Server，避免 StepRunner 中引入的 prefect 模块尝试连接。
+# 仅在用户显式启用 Prefect 且指定了 API URL 时才保留，用于可能的混合调试场景。
+if os.environ.get("PREFECT_API_URL") is None:
+    if settings.prefect_enabled and settings.prefect_api_url:
+        configure_prefect_api_url()
+    else:
+        os.environ["PREFECT_API_URL"] = ""
 
 from i18n import set_locale  # noqa: E402
 from services.llm_settings_service import load_llm_config  # noqa: E402

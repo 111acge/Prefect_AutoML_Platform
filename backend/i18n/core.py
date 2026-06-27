@@ -24,6 +24,21 @@ class I18n:
         self.locales_dir = Path(locales_dir)
         self._load_catalogs()
 
+    def __getstate__(self) -> Dict[str, Any]:
+        """支持 pickle：ContextVar 不可序列化，重建时重新初始化。"""
+        return {
+            "default_locale": self.default_locale,
+            "locales_dir": str(self.locales_dir),
+            "_catalogs": self._catalogs,
+        }
+
+    def __setstate__(self, state: Dict[str, Any]) -> None:
+        """从 pickle 恢复时重新创建 ContextVar。"""
+        self.default_locale = state["default_locale"]
+        self._locale = ContextVar("locale", default=self.default_locale)
+        self._catalogs = state.get("_catalogs", {})
+        self.locales_dir = Path(state["locales_dir"])
+
     def _load_catalogs(self) -> None:
         """加载所有语言包。"""
         if not self.locales_dir.exists():

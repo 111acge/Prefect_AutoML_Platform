@@ -11,6 +11,8 @@ cd "$PROJECT_ROOT"
 
 echo "🛑 停止服务..."
 
+"$PROJECT_ROOT/scripts/stop_prefect.sh"
+
 if [ -f "logs/backend.pid" ]; then
     kill "$(cat logs/backend.pid)" 2>/dev/null || true
     rm -f logs/backend.pid

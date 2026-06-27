@@ -4,9 +4,9 @@
 
 """FastAPI 应用入口。"""
 
-import os
+from config import configure_prefect_api_url, get_gpu_summary
 
-os.environ.setdefault("PREFECT_API_URL", "")
+configure_prefect_api_url()
 
 import logging
 from contextlib import asynccontextmanager
@@ -27,11 +27,14 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理。"""
+    # 打印 GPU 状态，便于排查训练加速是否生效
+    logger.info("GPU status: %s", get_gpu_summary())
     # 启动时初始化数据库
     await init_db()
     # 加载 LLM 用户配置

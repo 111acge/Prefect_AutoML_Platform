@@ -5,10 +5,10 @@
 
 """独立运行 Prefect AutoML Flow 的脚本。"""
 
+import argparse
+import json
 import os
 import sys
-import json
-import argparse
 import traceback
 from pathlib import Path
 
@@ -16,8 +16,14 @@ from pathlib import Path
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(project_root, "backend"))
 
-# 必须在导入 prefect 前设置
-os.environ.setdefault("PREFECT_API_URL", "")
+from config import configure_prefect_api_url, settings  # noqa: E402
+
+# 独立运行 Flow 时：若未显式配置则默认使用 ephemeral 模式（不依赖 Prefect Server）
+if os.environ.get("PREFECT_API_URL") is None:
+    if settings.prefect_enabled and settings.prefect_api_url:
+        configure_prefect_api_url()
+    else:
+        os.environ["PREFECT_API_URL"] = ""
 
 from i18n import set_locale  # noqa: E402
 from prefect_flows.automl_flow import automl_pipeline  # noqa: E402

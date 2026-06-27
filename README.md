@@ -42,7 +42,7 @@ Prefect AutoML Platform 是一个面向结构化数据的低代码 AutoML 平台
 ## 核心特性
 
 - 🧠 **自然语言意图解析（后端 API）**：提供 `/api/intent` 接口，支持将自然语言描述解析为训练配置、提取业务规则与 Schema 推断，可集成到外部工作流。
-- 🔄 **Prefect 工作流编排**：训练、评估、报告生成等步骤以 Prefect Flow 形式组织，支持观测与重跑。
+- 🔄 **Prefect 工作流编排**：训练任务通过 Prefect Server 调度执行，支持在 Prefect UI 中查看 Flow Run、Task Run、日志与 Artifact，并可在 Prefect 不可用时自动降级为本地子进程。
 - 🤖 **AutoGluon 自动机器学习**：自动尝试 LightGBM、CatBoost、XGBoost 等模型与集成策略。
 - 🛠️ **数据质量与特征工程**：内置缺失值处理、类别编码、不平衡样本处理、特征筛选等能力。
 - 📊 **可解释性报告**：SHAP 值、排列重要性、特征相关性、分布可视化。
@@ -168,6 +168,11 @@ make stop
 - 前端：`http://localhost:8084`
 - 后端 API：`http://localhost:8001`
 - API 文档：`http://localhost:8001/docs`
+- Prefect UI：`http://localhost:4200`
+
+> `scripts/run_dev.sh` 与 `scripts/run_prod.sh` 会自动启动 Prefect Server（端口 4200）和本地 Runner。若不需要 Prefect 编排，可在 `.env` 中设置 `PREFECT_ENABLED=false`，训练将回退到原有本地子进程模式。
+>
+> 如需在局域网其他机器访问 Prefect UI，请把 `.env` 中的 `PREFECT_API_URL` 改为本机局域网 IP（例如 `http://192.168.1.5:4200/api`），然后重启服务。
 
 ---
 
