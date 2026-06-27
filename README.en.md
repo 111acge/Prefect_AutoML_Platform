@@ -46,7 +46,7 @@ It also provides a complete REST API for easy integration into existing data pip
 - 🤖 **AutoGluon AutoML**: Automatically tries models and ensemble strategies such as LightGBM, CatBoost, and XGBoost.
 - 🛠️ **Data Quality & Feature Engineering**: Built-in missing value handling, categorical encoding, imbalanced sample processing, feature selection, and more.
 - 📊 **Interpretability Reports**: SHAP values, permutation importance, feature correlation, and distribution visualization.
-- 🔌 **Multi-LLM Provider Support**: KIMI, DeepSeek, MiniMax, GLM, OpenAI, with automatic fallback to a rule engine when not configured.
+- 🔌 **Optional LLM Enhancement**: Supports connecting to external LLMs such as KIMI, DeepSeek, MiniMax, GLM, and OpenAI; falls back to the local rule engine when not configured, so the core AutoML pipeline can run without an LLM.
 - 🌐 **Vue 3 Frontend**: Based on Element Plus + ECharts, supporting dataset management, training pipelines, and experiment comparison.
 - 🧪 **Comprehensive Test Coverage**: pytest unit tests and end-to-end tests.
 
@@ -255,7 +255,7 @@ curl -X POST http://localhost:8001/api/intent/parse \
 
 ## LLM Configuration
 
-The platform supports configuring the LLM through environment variables or the frontend UI. When no API Key is configured, it **automatically falls back to the rule engine** and can still complete common intent parsing.
+The platform supports a local rule engine fallback, so the core AutoML pipeline can run without an LLM. Connecting to an external LLM is optional and enhances the natural language interaction experience, but enabling it will send anonymized data samples and training metadata to third-party cloud service providers.
 
 Supported providers: `kimi`, `deepseek`, `minimax`, `glm`, `openai`, `auto`.
 

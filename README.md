@@ -46,7 +46,7 @@ Prefect AutoML Platform 是一个面向结构化数据的低代码 AutoML 平台
 - 🤖 **AutoGluon 自动机器学习**：自动尝试 LightGBM、CatBoost、XGBoost 等模型与集成策略。
 - 🛠️ **数据质量与特征工程**：内置缺失值处理、类别编码、不平衡样本处理、特征筛选等能力。
 - 📊 **可解释性报告**：SHAP 值、排列重要性、特征相关性、分布可视化。
-- 🔌 **多 LLM 提供商支持**：KIMI、DeepSeek、MiniMax、GLM、OpenAI，未配置时自动降级到规则引擎。
+- 🔌 **LLM 增强（可选）**：支持接入 KIMI、DeepSeek、MiniMax、GLM、OpenAI 等外部 LLM；未配置时由本地规则引擎兜底，核心 AutoML 流程无需 LLM 即可运行。
 - 🌐 **Vue 3 前端**：基于 Element Plus + ECharts，支持数据集管理、训练流水线、实验对比。
 - 🧪 **完整测试覆盖**：pytest 单元测试与端到端测试。
 
@@ -255,7 +255,7 @@ curl -X POST http://localhost:8001/api/intent/parse \
 
 ## LLM 配置
 
-平台支持通过环境变量或前端界面配置 LLM。未配置任何 Key 时，会**自动降级到规则引擎**，仍可完成常见意图解析。
+平台支持本地规则引擎兜底，无需 LLM 即可运行核心 AutoML 流程；可选接入外部 LLM 增强自然语言交互体验，但启用后会将脱敏后的数据样例和训练元数据发送至第三方云服务商。
 
 支持的 Provider：`kimi`、`deepseek`、`minimax`、`glm`、`openai`、`auto`。
 
