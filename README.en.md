@@ -2,7 +2,7 @@
 
 # Prefect AutoML Platform
 
-An end-to-end fully automated machine learning platform powered by **Prefect** workflow orchestration + **AutoGluon** automated modeling, combined with natural language intent understanding, to automate the entire pipeline from data cleaning to model deployment by simply stating a business goal.
+An end-to-end fully automated machine learning platform powered by **Prefect** workflow orchestration + **AutoGluon** automated modeling, automating the entire pipeline from data cleaning to model deployment. The backend also provides a natural language intent parsing API for integration into external workflows.
 
 ---
 
@@ -27,7 +27,7 @@ An end-to-end fully automated machine learning platform powered by **Prefect** w
 
 ## Introduction
 
-Prefect AutoML Platform is a low-code AutoML platform for structured data. Users can upload datasets through the Web UI and describe the modeling goal in natural language. The platform automatically completes:
+Prefect AutoML Platform is a low-code AutoML platform for structured data. Users can upload datasets through the Web UI, select the target column and task type, and the platform automatically completes:
 
 1. Data understanding and Schema inference
 2. Data cleaning and feature engineering
@@ -41,7 +41,7 @@ It also provides a complete REST API for easy integration into existing data pip
 
 ## Key Features
 
-- 🧠 **Natural Language Modeling**: Parses descriptions like "predict customer churn" or "forecast next month's sales based on historical data" via LLM, and automatically generates training configurations.
+- 🧠 **Natural Language Intent Parsing (Backend API)**: Provides the `/api/intent` endpoint for parsing natural language descriptions into training configs, extracting business rules, and inferring schemas, which can be integrated into external workflows.
 - 🔄 **Prefect Workflow Orchestration**: Training, evaluation, report generation, and other steps are organized as Prefect Flows, supporting observability and reruns.
 - 🤖 **AutoGluon AutoML**: Automatically tries models and ensemble strategies such as LightGBM, CatBoost, and XGBoost.
 - 🛠️ **Data Quality & Feature Engineering**: Built-in missing value handling, categorical encoding, imbalanced sample processing, feature selection, and more.
@@ -245,7 +245,7 @@ curl -X POST http://localhost:8001/api/intent/parse \
 |------|----------|
 | Home | Platform overview and quick access |
 | Dataset Management | Upload CSV/Excel, preview, view Schema |
-| Training Pipeline | Natural language input, config confirmation, one-click training |
+| Training Pipeline | Configure training parameters, confirm config, one-click training |
 | Run History | View status, metrics, and logs for each training run |
 | Run Detail | Model leaderboard, interpretability charts, download report |
 | Experiment Comparison | Multi-experiment metrics and visualization comparison |
